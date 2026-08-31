@@ -1,0 +1,63 @@
+# ============================================
+# AgentOS - Root Git Ignore
+# ============================================
+
+# ---------- Environment ----------
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+
+# ---------- Node / Next.js ----------
+node_modules/
+.next/
+out/
+.turbo/
+
+# ---------- Testing / Coverage ----------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ---------- Logs ----------
+*.log
+logs/
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Temporary files ----------
+*.tmp
+*.temp
+*.bak
+
+# ---------- Local databases ----------
+*.sqlite
+*.sqlite3
