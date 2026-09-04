@@ -8,6 +8,7 @@ from app.config import settings
 from app.base import Base
 from app.models.organization import Organization
 from app.models.user import User
+from app.models.agent import Agent
 
 config = context.config
 

@@ -5,11 +5,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import TYPE_CHECKING
 
 from app.base import Base
 
 if TYPE_CHECKING:
     from app.models.user import User
+    from app.models.agent import Agent
 
 
 class Organization(Base):
@@ -34,6 +36,12 @@ class Organization(Base):
 
     # Relationship to User
     users: Mapped[list["User"]] = relationship(
+        back_populates="organization",
+        cascade="all, delete-orphan",
+    )
+
+    # Relationship to Agent
+    agents: Mapped[list["Agent"]] = relationship(
         back_populates="organization",
         cascade="all, delete-orphan",
     )
