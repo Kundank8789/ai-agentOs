@@ -9,6 +9,7 @@ from app.base import Base
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.agent import Agent
+from app.models.task import Task
 
 config = context.config
 
