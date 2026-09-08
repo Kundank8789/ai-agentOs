@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from sqlalchemy import text
 
+from app.api.tasks import router as tasks_router
 from app.database import AsyncSessionLocal
 
 
@@ -9,6 +10,8 @@ app = FastAPI(
     description="AI employee platform for business operations",
     version="0.1.0",
 )
+
+app.include_router(tasks_router)
 
 
 @app.get("/health")
@@ -24,6 +27,7 @@ async def health():
 async def database_health():
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("SELECT 1"))
+
         return {
             "status": "ok",
             "database": result.scalar(),
