@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.models.organization import Organization
     from app.models.user import User
     from app.models.agent import Agent
+    from app.models.task_step import TaskStep
 
 
 class Task(Base):
@@ -69,6 +70,11 @@ class Task(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+    steps: Mapped[list["TaskStep"]] = relationship(
+    back_populates="task",
+    cascade="all, delete-orphan",
+)
 
     organization: Mapped["Organization"] = relationship()
 

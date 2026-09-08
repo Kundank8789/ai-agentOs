@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.base import Base
+from app.models.tool_call import ToolCall
 
 if TYPE_CHECKING:
     from app.models.task import Task
@@ -79,3 +80,8 @@ class TaskStep(Base):
     task: Mapped["Task"] = relationship(
         back_populates="steps",
     )
+
+    tool_calls: Mapped[list["ToolCall"]] = relationship(
+    back_populates="task_step",
+    cascade="all, delete-orphan",
+)
