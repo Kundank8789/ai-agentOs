@@ -9,6 +9,7 @@ from app.models.organization import Organization
 from app.models.user import User
 from app.models.task import Task
 from app.schemas.task import TaskCreate, TaskResponse
+from app.agent.runtime import AgentRuntime
 
 
 router = APIRouter(
@@ -93,8 +94,8 @@ async def list_tasks(
     return result.scalars().all()
 
 
-@router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(
+@router.post("/{task_id}/run", response_model=TaskResponse)
+async def run_task(
     task_id: UUID,
     db: AsyncSession = Depends(get_db),
     context=Depends(get_dev_context),
@@ -116,4 +117,27 @@ async def get_task(
             detail="Task not found",
         )
 
-    return task
+    if task.status == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="Task is already running",
+        )
+
+    runtime = AgentRuntime()
+
+    try:
+        task = await runtime.run(
+            task_id=task_id,
+            db=db,
+        )
+
+        return task
+
+    except Exception as exc:
+        task.status = "failed"
+        await db.commit()
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Task execution failed: {str(exc)}",
+        )
