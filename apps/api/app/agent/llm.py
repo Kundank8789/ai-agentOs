@@ -1,6 +1,7 @@
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.schemas.plan import ExecutionPlan
 
 
 client = AsyncOpenAI(
@@ -12,11 +13,10 @@ client = AsyncOpenAI(
 async def generate_plan(
     task_title: str,
     task_description: str | None,
-):
-    prompt = f"""
-You are the planning engine for AgentOS.
+) -> ExecutionPlan:
 
-Analyze the following business task and create a concise execution plan.
+    prompt = f"""
+Create an execution plan for this AgentOS business task.
 
 Task title:
 {task_title}
@@ -24,24 +24,37 @@ Task title:
 Task description:
 {task_description or "No additional description."}
 
-Return:
+Available tools:
+- google_sheets
+- gmail
+- crm
+- web_search
+- reasoning
+- approval
 
-1. Goal
-2. Required steps
-3. Tools that may be required
-4. Whether human approval may be required
-
-Do not execute anything.
-Only create the plan.
+Rules:
+- Only use tools from the available tools list.
+- Do not execute anything.
+- Sending emails requires approval.
+- Updating CRM requires approval.
+- Keep the plan practical and concise.
 """
 
     response = await client.responses.create(
         model=settings.groq_model,
         instructions=(
-            "You are an AI operations planner. "
-            "Be precise, practical, and concise."
+            "You are the AgentOS planning engine. "
+            "Return a structured execution plan."
         ),
         input=prompt,
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "execution_plan",
+                "schema": ExecutionPlan.model_json_schema(),
+                "strict": True,
+            }
+        },
     )
 
-    return response.output_text
+    return ExecutionPlan.model_validate_json(response.output_text)
