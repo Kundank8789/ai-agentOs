@@ -3,6 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.llm import generate_plan
 from app.models.task import Task
 from app.models.task_step import TaskStep
 
@@ -11,8 +12,8 @@ class AgentRuntime:
     """
     Core execution engine for AgentOS.
 
-    For now this runtime executes a deterministic plan.
-    Later the planner will be powered by an LLM.
+    The runtime asks the LLM to create an execution plan,
+    then stores that plan as TaskStep records.
     """
 
     async def run(
@@ -31,47 +32,41 @@ class AgentRuntime:
             raise ValueError("Task not found")
 
         task.status = "running"
-
         await db.commit()
 
-        steps = [
-            {
-                "name": "Understand task",
-                "description": "Analyze the user's request and determine what needs to be done.",
-            },
-            {
-                "name": "Plan execution",
-                "description": "Create an execution plan for completing the task.",
-            },
-            {
-                "name": "Execute actions",
-                "description": "Execute the required business operations.",
-            },
-            {
-                "name": "Prepare result",
-                "description": "Prepare the final result for the user.",
-            },
-        ]
-
-        for index, step_data in enumerate(steps, start=1):
-
-            step = TaskStep(
-                task_id=task.id,
-                step_number=index,
-                name=step_data["name"],
-                description=step_data["description"],
-                status="completed",
-                input={},
-                output={
-                    "message": f"Step '{step_data['name']}' completed."
-                },
+        try:
+            # Ask Groq to create the execution plan.
+            plan = await generate_plan(
+                task_title=task.title,
+                task_description=task.description,
             )
 
-            db.add(step)
+            # Store the generated plan as TaskStep records.
+            for step_data in plan.steps:
 
-        task.status = "completed"
+                step = TaskStep(
+                    task_id=task.id,
+                    step_number=step_data.step_number,
+                    name=step_data.name,
+                    description=step_data.description,
+                    status="planned",
+                    input={
+                        "tool": step_data.tool,
+                        "requires_approval": step_data.requires_approval,
+                    },
+                    output=None,
+                )
 
-        await db.commit()
-        await db.refresh(task)
+                db.add(step)
 
-        return task
+            task.status = "planned"
+
+            await db.commit()
+            await db.refresh(task)
+
+            return task
+
+        except Exception:
+            task.status = "failed"
+            await db.commit()
+            raise
