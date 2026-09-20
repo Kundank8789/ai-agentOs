@@ -3,6 +3,7 @@ from sqlalchemy import text
 
 from app.api.tasks import router as tasks_router
 from app.database import AsyncSessionLocal
+from app.api.approvals import router as approvals_router
 
 
 app = FastAPI(
@@ -12,6 +13,7 @@ app = FastAPI(
 )
 
 app.include_router(tasks_router)
+app.include_router(approvals_router)
 
 
 @app.get("/health")
