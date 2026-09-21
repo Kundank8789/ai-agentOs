@@ -8,6 +8,7 @@ from app.database import AsyncSessionLocal
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.task import Task
+from app.models.task_step import TaskStep
 from app.schemas.task import TaskCreate, TaskResponse
 from app.agent.runtime import AgentRuntime
 
@@ -89,6 +90,40 @@ async def list_tasks(
         select(Task)
         .where(Task.organization_id == organization.id)
         .order_by(Task.created_at.desc())
+    )
+
+    return result.scalars().all()
+
+
+@router.get("/{task_id}/steps")
+async def list_task_steps(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    context=Depends(get_dev_context),
+):
+    _, organization = context
+
+    # Verify task belongs to this organization
+    task_result = await db.execute(
+        select(Task).where(
+            Task.id == task_id,
+            Task.organization_id == organization.id,
+        )
+    )
+
+    task = task_result.scalar_one_or_none()
+
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found",
+        )
+
+    # Get task steps
+    result = await db.execute(
+        select(TaskStep)
+        .where(TaskStep.task_id == task_id)
+        .order_by(TaskStep.step_number.asc())
     )
 
     return result.scalars().all()
