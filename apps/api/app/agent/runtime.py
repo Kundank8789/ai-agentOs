@@ -118,9 +118,26 @@ class AgentRuntime:
                     context=context,
                 )
 
-                # Save useful data from tool execution
-                if result:
-                    context.update(result)
+                if result and step_data.tool == "google_sheets":
+                    orders = result.get("orders", [])
+
+                    delayed_customers = [
+                        {
+                            "order_id": order.get("order_id"),
+                            "customer_name": order.get("customer_name"),
+                            "customer_email": order.get("customer_email"),
+                        }
+                        for order in orders
+                        if order.get("status") == "Delayed"
+                    ]
+
+                    context["customers"] = delayed_customers
+
+                    step.output = {
+                        **result,
+                        "delayed_customers": delayed_customers,
+                        "delayed_count": len(delayed_customers),
+                    }
 
             # -----------------------------------------
             # Determine task state
@@ -171,7 +188,6 @@ class AgentRuntime:
             return step.output
 
         try:
-
             # Pass context to tools
             result = await tool.execute(
                 customers=context.get("customers", [])
@@ -179,30 +195,6 @@ class AgentRuntime:
 
             step.status = "completed"
             step.output = result
-
-            # -----------------------------------------
-            # Google Sheets → delayed customers
-            # -----------------------------------------
-            if tool_name == "google_sheets":
-
-                orders = result.get("orders", [])
-
-                delayed_customers = [
-                    {
-                        "order_id": order.get("order_id"),
-                        "customer_name": order.get("customer_name"),
-                        "customer_email": order.get("customer_email"),
-                    }
-                    for order in orders
-                    if order.get("status") == "Delayed"
-                ]
-
-                result["delayed_customers"] = delayed_customers
-                result["delayed_count"] = len(delayed_customers)
-
-                context["customers"] = delayed_customers
-
-                step.output = result
 
             return result
 
