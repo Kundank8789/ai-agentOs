@@ -21,7 +21,6 @@ class AgentRuntime:
     def __init__(self) -> None:
         self.registry = ToolRegistry()
 
-        # Register available tools.
         self.registry.register(GoogleSheetsTool())
         self.registry.register(GmailTool())
         self.registry.register(CRMTool())
@@ -45,13 +44,16 @@ class AgentRuntime:
         await db.commit()
 
         try:
-            # 1. Generate execution plan.
+            # 1. Generate execution plan
             plan = await generate_plan(
                 task_title=task.title,
                 task_description=task.description,
             )
 
-            # 2. Process planned steps.
+            # Data produced by previous steps
+            context: dict = {}
+
+            # 2. Execute planned steps
             for step_data in plan.steps:
 
                 step = TaskStep(
@@ -70,21 +72,29 @@ class AgentRuntime:
                 db.add(step)
                 await db.flush()
 
-                # 3. Approval required.
+                # -----------------------------------------
+                # Approval-required step
+                # -----------------------------------------
                 if step_data.requires_approval:
 
                     step.status = "waiting_approval"
+
+                    requested_data = {
+                        "tool": step_data.tool,
+                        "step_number": step_data.step_number,
+                        "step_name": step_data.name,
+                    }
+
+                    # Pass delayed customers to Gmail / CRM
+                    if "customers" in context:
+                        requested_data["customers"] = context["customers"]
 
                     approval = Approval(
                         task_id=task.id,
                         task_step_id=step.id,
                         action=step_data.tool,
                         description=step_data.description,
-                        requested_data={
-                            "tool": step_data.tool,
-                            "step_number": step_data.step_number,
-                            "step_name": step_data.name,
-                        },
+                        requested_data=requested_data,
                         status="pending",
                     )
 
@@ -99,23 +109,32 @@ class AgentRuntime:
 
                     continue
 
-                # 4. Execute non-approval tool.
-                await self._execute_step(
+                # -----------------------------------------
+                # Execute non-approval step
+                # -----------------------------------------
+                result = await self._execute_step(
                     step=step,
                     tool_name=step_data.tool,
+                    context=context,
                 )
 
-            # 5. Determine task state.
-            pending_approvals = await db.execute(
+                # Save useful data from tool execution
+                if result:
+                    context.update(result)
+
+            # -----------------------------------------
+            # Determine task state
+            # -----------------------------------------
+            pending_result = await db.execute(
                 select(Approval).where(
                     Approval.task_id == task.id,
                     Approval.status == "pending",
                 )
             )
 
-            approvals = pending_approvals.scalars().all()
+            pending_approvals = pending_result.scalars().all()
 
-            if approvals:
+            if pending_approvals:
                 task.status = "waiting_approval"
             else:
                 task.status = "completed"
@@ -134,29 +153,68 @@ class AgentRuntime:
         self,
         step: TaskStep,
         tool_name: str,
-    ) -> None:
+        context: dict | None = None,
+    ) -> dict:
+
+        context = context or {}
 
         try:
             tool = self.registry.get(tool_name)
 
         except KeyError:
             step.status = "failed"
+
             step.output = {
                 "error": f"Tool '{tool_name}' is not registered."
             }
-            return
+
+            return step.output
 
         try:
-            result = await tool.execute()
+
+            # Pass context to tools
+            result = await tool.execute(
+                customers=context.get("customers", [])
+            )
 
             step.status = "completed"
             step.output = result
 
+            # -----------------------------------------
+            # Google Sheets → delayed customers
+            # -----------------------------------------
+            if tool_name == "google_sheets":
+
+                orders = result.get("orders", [])
+
+                delayed_customers = [
+                    {
+                        "order_id": order.get("order_id"),
+                        "customer_name": order.get("customer_name"),
+                        "customer_email": order.get("customer_email"),
+                    }
+                    for order in orders
+                    if order.get("status") == "Delayed"
+                ]
+
+                result["delayed_customers"] = delayed_customers
+                result["delayed_count"] = len(delayed_customers)
+
+                context["customers"] = delayed_customers
+
+                step.output = result
+
+            return result
+
         except Exception as exc:
+
             step.status = "failed"
+
             step.output = {
                 "error": str(exc),
             }
+
+            return step.output
 
     async def resume_after_approval(
         self,
@@ -164,7 +222,7 @@ class AgentRuntime:
         db: AsyncSession,
     ) -> Task:
 
-        # Find approval.
+        # Find approval
         result = await db.execute(
             select(Approval).where(
                 Approval.id == approval_id
@@ -176,13 +234,21 @@ class AgentRuntime:
         if approval is None:
             raise ValueError("Approval not found")
 
-        # Find associated task.
-        task = await db.get(Task, approval.task_id)
+        if approval.status != "approved":
+            raise ValueError(
+                f"Approval is not approved. Current status: {approval.status}"
+            )
+
+        # Find task
+        task = await db.get(
+            Task,
+            approval.task_id,
+        )
 
         if task is None:
             raise ValueError("Task not found")
 
-        # Find associated step.
+        # Find task step
         step = await db.get(
             TaskStep,
             approval.task_step_id,
@@ -191,7 +257,14 @@ class AgentRuntime:
         if step is None:
             raise ValueError("Task step not found")
 
-        # Execute approved tool.
+        # Get data saved when approval was created
+        requested_data = approval.requested_data or {}
+
+        customers = requested_data.get(
+            "customers",
+            [],
+        )
+
         tool_name = approval.action
 
         step.status = "running"
@@ -199,12 +272,28 @@ class AgentRuntime:
 
         await db.commit()
 
-        await self._execute_step(
-            step=step,
-            tool_name=tool_name,
-        )
+        # Execute approved tool with customer data
+        try:
 
-        # Check whether any other approvals remain.
+            tool = self.registry.get(tool_name)
+
+            result = await tool.execute(
+                customers=customers
+            )
+
+            step.status = "completed"
+
+            step.output = result
+
+        except Exception as exc:
+
+            step.status = "failed"
+
+            step.output = {
+                "error": str(exc)
+            }
+
+        # Check remaining approvals
         pending_result = await db.execute(
             select(Approval).where(
                 Approval.task_id == task.id,
@@ -215,9 +304,11 @@ class AgentRuntime:
         pending_approvals = pending_result.scalars().all()
 
         if pending_approvals:
+
             task.status = "waiting_approval"
+
         else:
-            # Check whether any task steps failed.
+
             failed_result = await db.execute(
                 select(TaskStep).where(
                     TaskStep.task_id == task.id,
