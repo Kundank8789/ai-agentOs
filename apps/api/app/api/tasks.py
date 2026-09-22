@@ -9,7 +9,9 @@ from app.models.organization import Organization
 from app.models.user import User
 from app.models.task import Task
 from app.models.task_step import TaskStep
+from app.models.audit_log import AuditLog
 from app.schemas.task import TaskCreate, TaskResponse
+from app.schemas.audit import AuditLogResponse
 from app.agent.runtime import AgentRuntime
 
 
@@ -124,6 +126,41 @@ async def list_task_steps(
         select(TaskStep)
         .where(TaskStep.task_id == task_id)
         .order_by(TaskStep.step_number.asc())
+    )
+
+    return result.scalars().all()
+
+
+@router.get(
+    "/{task_id}/audit",
+    response_model=list[AuditLogResponse],
+)
+async def list_task_audit_logs(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    context=Depends(get_dev_context),
+):
+    _, organization = context
+
+    task_result = await db.execute(
+        select(Task).where(
+            Task.id == task_id,
+            Task.organization_id == organization.id,
+        )
+    )
+
+    task = task_result.scalar_one_or_none()
+
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found",
+        )
+
+    result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.task_id == task_id)
+        .order_by(AuditLog.created_at.asc())
     )
 
     return result.scalars().all()
