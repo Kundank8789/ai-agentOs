@@ -97,6 +97,7 @@ class AgentRuntime:
                     input={
                         "tool": step_data.tool,
                         "requires_approval": step_data.requires_approval,
+                        "operation": step_data.name,
                     },
                     output=None,
                 )
@@ -115,6 +116,7 @@ class AgentRuntime:
                         "tool": step_data.tool,
                         "step_number": step_data.step_number,
                         "step_name": step_data.name,
+                        "operation": step_data.name,
                     }
 
                     # Pass delayed customers to Gmail / CRM
@@ -172,6 +174,7 @@ class AgentRuntime:
                 result = await self._execute_step(
                     step=step,
                     tool_name=step_data.tool,
+                    operation=step_data.name,
                     context=context,
                     db=db,
                 )
@@ -278,6 +281,7 @@ class AgentRuntime:
         self,
         step: TaskStep,
         tool_name: str,
+        operation: str | None = None,
         context: dict | None = None,
         db: AsyncSession | None = None,
     ) -> dict:
@@ -313,10 +317,24 @@ class AgentRuntime:
 
             return step.output
 
+        # -----------------------------------------
+        # Determine operation mode (draft vs send)
+        # -----------------------------------------
+        mode = "send"
+
+        if tool_name == "gmail":
+            operation_text = (operation or "").lower()
+
+            if "draft" in operation_text:
+                mode = "draft"
+            elif "send" in operation_text:
+                mode = "send"
+
         try:
-            # Pass context to tools
+            # Pass context + mode to tools
             result = await tool.execute(
-                customers=context.get("customers", [])
+                customers=context.get("customers", []),
+                mode=mode,
             )
 
             step.status = "completed"
@@ -339,6 +357,7 @@ class AgentRuntime:
                     ),
                     metadata={
                         "tool": tool_name,
+                        "mode": mode,
                     },
                 )
 
@@ -447,13 +466,29 @@ class AgentRuntime:
             },
         )
 
-        # Execute approved tool with customer data
+        # -----------------------------------------
+        # Determine operation mode from stored step_name
+        # -----------------------------------------
+        operation = requested_data.get("step_name", "")
+
+        mode = "send"
+
+        if tool_name == "gmail":
+            operation_text = operation.lower()
+
+            if "draft" in operation_text:
+                mode = "draft"
+            elif "send" in operation_text:
+                mode = "send"
+
+        # Execute approved tool with customer data + mode
         try:
 
             tool = self.registry.get(tool_name)
 
             result = await tool.execute(
-                customers=customers
+                customers=customers,
+                mode=mode,
             )
 
             step.status = "completed"
@@ -476,6 +511,7 @@ class AgentRuntime:
                 ),
                 metadata={
                     "tool": tool_name,
+                    "mode": mode,
                 },
             )
 

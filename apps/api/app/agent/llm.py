@@ -34,10 +34,17 @@ Available tools:
 
 Rules:
 - Only use tools from the available tools list.
-- Do not execute anything.
-- Sending emails requires approval.
-- Updating CRM requires approval.
+- Do not execute anything while planning.
+- Reading data from Google Sheets does not require approval.
+- Identifying or filtering customers does not require approval.
+- Drafting an email does not require approval.
+- Sending an email requires approval.
+- Updating CRM records requires approval.
+- Any external side effect requires approval.
 - Keep the plan practical and concise.
+- Do not create duplicate steps for the same action.
+- If an email needs to be sent, create a separate drafting step followed by a sending step.
+- The sending step must have requires_approval=true.
 """
 
     response = await client.responses.create(
