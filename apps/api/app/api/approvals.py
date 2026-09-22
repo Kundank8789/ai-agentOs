@@ -9,6 +9,7 @@ from app.agent.runtime import AgentRuntime
 from app.database import AsyncSessionLocal
 from app.models.approval import Approval
 from app.models.task import Task
+from app.services.audit import log_audit
 
 
 router = APIRouter(
@@ -55,6 +56,22 @@ async def approve_approval(
 
     approval.status = "approved"
     approval.decided_at = datetime.now(timezone.utc)
+
+    # -----------------------------------------
+    # Audit: approval.approved (human decision)
+    # -----------------------------------------
+    await log_audit(
+        db,
+        task_id=approval.task_id,
+        task_step_id=approval.task_step_id,
+        event_type="approval.approved",
+        actor_type="user",
+        action=approval.action,
+        message=f"Approval granted for {approval.action}.",
+        metadata={
+            "approval_id": str(approval.id),
+        },
+    )
 
     await db.commit()
 
@@ -106,6 +123,22 @@ async def reject_approval(
 
     if task is not None:
         task.status = "failed"
+
+    # -----------------------------------------
+    # Audit: approval.rejected (human decision)
+    # -----------------------------------------
+    await log_audit(
+        db,
+        task_id=approval.task_id,
+        task_step_id=approval.task_step_id,
+        event_type="approval.rejected",
+        actor_type="user",
+        action=approval.action,
+        message=f"Approval rejected for {approval.action}.",
+        metadata={
+            "approval_id": str(approval.id),
+        },
+    )
 
     await db.commit()
     await db.refresh(approval)
