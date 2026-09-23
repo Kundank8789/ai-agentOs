@@ -318,9 +318,9 @@ class AgentRuntime:
             return step.output
 
         # -----------------------------------------
-        # Determine operation mode (draft vs send)
+        # Determine operation mode (Gmail only)
         # -----------------------------------------
-        mode = "send"
+        mode = None
 
         if tool_name == "gmail":
             operation_text = (operation or "").lower()
@@ -331,11 +331,18 @@ class AgentRuntime:
                 mode = "send"
 
         try:
-            # Pass context + mode to tools
-            result = await tool.execute(
-                customers=context.get("customers", []),
-                mode=mode,
-            )
+            # -----------------------------------------
+            # Pass mode only to Gmail
+            # -----------------------------------------
+            if tool_name == "gmail":
+                result = await tool.execute(
+                    customers=context.get("customers", []),
+                    mode=mode or "send",
+                )
+            else:
+                result = await tool.execute(
+                    customers=context.get("customers", []),
+                )
 
             step.status = "completed"
             step.output = result
@@ -450,28 +457,11 @@ class AgentRuntime:
         await db.commit()
 
         # -----------------------------------------
-        # Audit: approval.approved
-        # -----------------------------------------
-        await log_audit(
-            db,
-            task_id=task.id,
-            task_step_id=step.id,
-            event_type="approval.approved",
-            actor_type="user",
-            action=tool_name,
-            message=f"Approval granted for {tool_name}.",
-            metadata={
-                "approval_id": str(approval.id),
-                "customers_count": len(customers),
-            },
-        )
-
-        # -----------------------------------------
-        # Determine operation mode from stored step_name
+        # Determine operation mode (Gmail only)
         # -----------------------------------------
         operation = requested_data.get("step_name", "")
 
-        mode = "send"
+        mode = None
 
         if tool_name == "gmail":
             operation_text = operation.lower()
@@ -481,15 +471,23 @@ class AgentRuntime:
             elif "send" in operation_text:
                 mode = "send"
 
-        # Execute approved tool with customer data + mode
+        # Execute approved tool
         try:
 
             tool = self.registry.get(tool_name)
 
-            result = await tool.execute(
-                customers=customers,
-                mode=mode,
-            )
+            # -----------------------------------------
+            # Pass mode only to Gmail
+            # -----------------------------------------
+            if tool_name == "gmail":
+                result = await tool.execute(
+                    customers=customers,
+                    mode=mode or "send",
+                )
+            else:
+                result = await tool.execute(
+                    customers=customers,
+                )
 
             step.status = "completed"
 

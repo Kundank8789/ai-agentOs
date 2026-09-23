@@ -97,6 +97,32 @@ async def list_tasks(
     return result.scalars().all()
 
 
+@router.get("/{task_id}", response_model=TaskResponse)
+async def get_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    context=Depends(get_dev_context),
+):
+    _, organization = context
+
+    result = await db.execute(
+        select(Task).where(
+            Task.id == task_id,
+            Task.organization_id == organization.id,
+        )
+    )
+
+    task = result.scalar_one_or_none()
+
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found",
+        )
+
+    return task
+
+
 @router.get("/{task_id}/steps")
 async def list_task_steps(
     task_id: UUID,
