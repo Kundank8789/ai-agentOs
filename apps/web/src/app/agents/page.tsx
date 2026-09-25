@@ -1,184 +1,112 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
-const agents = [
-  {
-    id: "crm",
-    name: "CRM Agent",
-    description: "Manages leads, customers, CRM updates and follow-ups.",
-    status: "active",
-    tasks: 24,
-    success: "96%",
-    lastActive: "2 minutes ago",
-    capabilities: [
-      "Read CRM data",
-      "Create leads",
-      "Update customer status",
-      "Create follow-up tasks",
-    ],
-  },
-  {
-    id: "support",
-    name: "Customer Support Agent",
-    description: "Handles customer support workflows and communication.",
-    status: "active",
-    tasks: 18,
-    success: "94%",
-    lastActive: "5 minutes ago",
-    capabilities: [
-      "Read customer messages",
-      "Draft replies",
-      "Classify support requests",
-      "Escalate sensitive issues",
-    ],
-  },
-  {
-    id: "operations",
-    name: "Operations Agent",
-    description: "Handles orders, delays, notifications and operational workflows.",
-    status: "idle",
-    tasks: 31,
-    success: "98%",
-    lastActive: "18 minutes ago",
-    capabilities: [
-      "Check delayed orders",
-      "Create notifications",
-      "Update order status",
-      "Create approval requests",
-    ],
-  },
-];
+const API_URL = "http://127.0.0.1:8000";
+
+type Agent = {
+  id: string;
+  name: string;
+  description?: string;
+  status?: string;
+  role?: string;
+  model?: string;
+};
 
 export default function AgentsPage() {
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  async function loadAgents() {
+    try {
+      const response = await fetch(`${API_URL}/agents/`);
+
+      if (!response.ok) {
+        throw new Error("Failed to load agents");
+      }
+
+      const data = await response.json();
+      setAgents(data);
+    } catch (error) {
+      console.error("Agents fetch error:", error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAgents();
+  }, []);
+
   return (
-    <main className="min-h-screen bg-black text-white">
-      <div className="mx-auto max-w-7xl px-8 py-10">
-        <div className="mb-10">
+    <main className="min-h-screen bg-[#09090b] text-white p-6 md:p-10">
+      <div className="mx-auto max-w-5xl">
+        <header className="mb-8">
           <Link
             href="/"
-            className="text-sm text-zinc-500 transition hover:text-white"
+            className="text-sm text-zinc-500 transition hover:text-zinc-300"
           >
             ← Back to dashboard
           </Link>
 
-          <div className="mt-8">
-            <p className="text-sm font-medium text-blue-400">AI Workforce</p>
+          <h1 className="mt-4 text-3xl font-semibold tracking-tight">
+            AI Agents
+          </h1>
 
-            <h1 className="mt-2 text-4xl font-semibold tracking-tight">
-              AI Agents
-            </h1>
+          <p className="mt-2 text-zinc-400">
+            Your AI employees — each specialized for a different
+            part of your business.
+          </p>
+        </header>
 
-            <p className="mt-3 max-w-2xl text-zinc-400">
-              Manage your AI employees, their capabilities and operational
-              activity.
+        {loading ? (
+          <p className="text-zinc-500">Loading agents...</p>
+        ) : agents.length === 0 ? (
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center">
+            <p className="text-zinc-400">No agents yet.</p>
+            <p className="mt-2 text-sm text-zinc-600">
+              Seed one with{" "}
+              <code className="rounded bg-white/5 px-1.5 py-0.5">
+                python -m app.seed
+              </code>
             </p>
           </div>
-        </div>
-
-        <div className="mb-8 grid gap-4 md:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-            <p className="text-sm text-zinc-500">Total agents</p>
-            <p className="mt-2 text-3xl font-semibold">3</p>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-            <p className="text-sm text-zinc-500">Active</p>
-            <p className="mt-2 text-3xl font-semibold text-green-400">2</p>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-            <p className="text-sm text-zinc-500">Tasks completed</p>
-            <p className="mt-2 text-3xl font-semibold">73</p>
-          </div>
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          {agents.map((agent) => (
-            <div
-              key={agent.id}
-              className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 transition hover:border-white/20"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/5 text-xl">
-                    🤖
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {agents.map((agent) => (
+              <Link
+                key={agent.id}
+                href={`/agents/${agent.id}`}
+                className="group rounded-2xl border border-white/10 bg-white/[0.02] p-5 transition hover:border-blue-500/40 hover:bg-white/[0.04]"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/10 text-lg text-blue-400">
+                    ✦
                   </div>
 
-                  <div>
-                    <h2 className="text-xl font-semibold">{agent.name}</h2>
-
-                    <div className="mt-2 flex items-center gap-2">
-                      <span
-                        className={`h-2 w-2 rounded-full ${
-                          agent.status === "active"
-                            ? "bg-green-400"
-                            : "bg-zinc-500"
-                        }`}
-                      />
-
-                      <span
-                        className={
-                          agent.status === "active"
-                            ? "text-sm text-green-400"
-                            : "text-sm text-zinc-500"
-                        }
-                      >
-                        {agent.status === "active" ? "Active" : "Idle"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <p className="mt-6 text-sm leading-6 text-zinc-400">
-                {agent.description}
-              </p>
-
-              <div className="mt-6 grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-white/5 bg-black/30 p-4">
-                  <p className="text-xs text-zinc-500">Tasks completed</p>
-                  <p className="mt-1 text-xl font-semibold">{agent.tasks}</p>
-                </div>
-
-                <div className="rounded-xl border border-white/5 bg-black/30 p-4">
-                  <p className="text-xs text-zinc-500">Success rate</p>
-                  <p className="mt-1 text-xl font-semibold">{agent.success}</p>
-                </div>
-              </div>
-
-              <div className="mt-6">
-                <p className="text-xs uppercase tracking-wider text-zinc-600">
-                  Capabilities
-                </p>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {agent.capabilities.map((capability) => (
-                    <span
-                      key={capability}
-                      className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300"
-                    >
-                      {capability}
+                  {agent.status && (
+                    <span className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-zinc-400">
+                      {agent.status}
                     </span>
-                  ))}
+                  )}
                 </div>
-              </div>
 
-              <div className="mt-6 flex items-center justify-between border-t border-white/10 pt-5">
-                <p className="text-xs text-zinc-500">
-                  Last active: {agent.lastActive}
+                <h2 className="mt-4 text-base font-medium">
+                  {agent.name}
+                </h2>
+
+                <p className="mt-1 line-clamp-2 text-sm text-zinc-500">
+                  {agent.description || "No description provided."}
                 </p>
 
-                <Link
-                  href={`/agents/${agent.id}`}
-                  className="rounded-lg border border-white/10 px-4 py-2 text-sm font-medium transition hover:bg-white/10"
-                >
-                  View Agent →
-                </Link>
-              </div>
-            </div>
-          ))}
-        </div>
+                <p className="mt-4 text-xs font-medium text-blue-400 opacity-0 transition group-hover:opacity-100">
+                  View agent →
+                </p>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </main>
   );
