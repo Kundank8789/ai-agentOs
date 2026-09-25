@@ -5,6 +5,7 @@ from sqlalchemy import text
 from app.api.tasks import router as tasks_router
 from app.api.approvals import router as approvals_router
 from app.database import AsyncSessionLocal
+from app.api.agents import router as agents_router
 
 
 app = FastAPI(
@@ -31,6 +32,7 @@ app.add_middleware(
 
 app.include_router(tasks_router)
 app.include_router(approvals_router)
+app.include_router(agents_router)
 
 
 @app.get("/health")
