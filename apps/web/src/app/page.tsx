@@ -81,11 +81,11 @@ export default function Home() {
           </div>
 
           <nav className="space-y-2">
-            <NavItem active label="Dashboard" icon="⌂" />
-            <NavItem label="Tasks" icon="✓" />
+            <NavItem href="/" active label="Dashboard" icon="⌂" />
+            <NavItem href="/tasks" label="Tasks" icon="✓" />
             <NavItem href="/approvals" label="Approvals" icon="!" />
-            <NavItem label="Agents" icon="✦" />
-            <NavItem label="Audit Logs" icon="◷" />
+            <NavItem href="/agents" label="Agents" icon="✦" />
+            <NavItem href="/audit" label="Audit Logs" icon="◷" />
           </nav>
 
           <div className="absolute bottom-6 w-52">
@@ -271,11 +271,10 @@ function NavItem({
   active?: boolean;
   href?: string;
 }) {
-  const className = `flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition ${
-    active
+  const className = `flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition ${active
       ? "bg-blue-500/10 text-blue-400"
       : "text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
-  }`;
+    }`;
 
   if (href) {
     return (
@@ -323,9 +322,8 @@ function StatusBadge({ status }: { status: string }) {
 
   return (
     <span
-      className={`whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] ${
-        styles[status] ?? "bg-white/5 text-zinc-400"
-      }`}
+      className={`whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] ${styles[status] ?? "bg-white/5 text-zinc-400"
+        }`}
     >
       {status.replace("_", " ")}
     </span>
