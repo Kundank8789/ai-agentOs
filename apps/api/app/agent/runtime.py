@@ -11,6 +11,8 @@ from app.services.audit import log_audit
 from app.tools.google_sheets import GoogleSheetsTool
 from app.tools.gmail import GmailTool
 from app.tools.crm import CRMTool
+from app.tools.web_search import WebSearchTool
+from app.tools.reasoning import ReasoningTool
 from app.tools.registry import ToolRegistry
 
 
@@ -25,6 +27,8 @@ class AgentRuntime:
         self.registry.register(GoogleSheetsTool())
         self.registry.register(GmailTool())
         self.registry.register(CRMTool())
+        self.registry.register(WebSearchTool())
+        self.registry.register(ReasoningTool())
 
     async def run(
         self,
