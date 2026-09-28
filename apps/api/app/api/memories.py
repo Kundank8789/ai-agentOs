@@ -1,0 +1,111 @@
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import AsyncSessionLocal
+from app.models.memory import Memory
+
+
+router = APIRouter(
+    prefix="/memories",
+    tags=["Memories"],
+)
+
+
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
+
+
+class MemoryCreate(BaseModel):
+    type: str
+    key: str
+    value: str
+    agent_id: UUID | None = None
+
+
+class MemoryResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    user_id: UUID | None
+    agent_id: UUID | None
+    type: str
+    key: str
+    value: str
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/", response_model=list[MemoryResponse])
+async def list_memories(
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Memory).order_by(Memory.created_at.desc())
+    )
+
+    return result.scalars().all()
+
+
+@router.post("/", response_model=MemoryResponse)
+async def create_memory(
+    memory_data: MemoryCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    memory = Memory(
+        organization_id="e09104e9-90d3-4c89-a10d-dcb690a925c0",
+        user_id="55bb0f3e-3a77-4b19-b1e3-fbb3cb008085",
+        agent_id=memory_data.agent_id,
+        type=memory_data.type,
+        key=memory_data.key,
+        value=memory_data.value,
+    )
+
+    db.add(memory)
+
+    await db.commit()
+    await db.refresh(memory)
+
+    return memory
+
+
+@router.get("/{memory_id}", response_model=MemoryResponse)
+async def get_memory(
+    memory_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    memory = await db.get(Memory, memory_id)
+
+    if memory is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Memory not found",
+        )
+
+    return memory
+
+
+@router.delete("/{memory_id}")
+async def delete_memory(
+    memory_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    memory = await db.get(Memory, memory_id)
+
+    if memory is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Memory not found",
+        )
+
+    await db.delete(memory)
+    await db.commit()
+
+    return {
+        "success": True,
+        "message": "Memory deleted",
+    }
