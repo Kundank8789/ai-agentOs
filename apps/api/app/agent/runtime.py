@@ -8,7 +8,10 @@ from app.models.approval import Approval
 from app.models.task import Task
 from app.models.task_step import TaskStep
 from app.services.audit import log_audit
-from app.services.memory import get_memories
+from app.services.memory import (
+    filter_relevant_memories,
+    get_memories,
+)
 from app.services.memory_extractor import save_task_memory
 from app.tools.google_sheets import GoogleSheetsTool
 from app.tools.gmail import GmailTool
@@ -73,13 +76,19 @@ class AgentRuntime:
                 agent_id=task.agent_id,
             )
 
+            relevant_memories = filter_relevant_memories(
+                memories=memories,
+                task_title=task.title,
+                task_description=task.description,
+            )
+
             memory_context = [
                 {
                     "type": memory.type,
                     "key": memory.key,
                     "value": memory.value,
                 }
-                for memory in memories
+                for memory in relevant_memories
             ]
 
             # -----------------------------------------
@@ -108,6 +117,7 @@ class AgentRuntime:
                     "step_count": len(plan.steps),
                     "goal": plan.goal,
                     "memory_count": len(memory_context),
+                    "total_memory_count": len(memories),
                 },
             )
 

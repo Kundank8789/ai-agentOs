@@ -85,3 +85,64 @@ async def save_memory(
     await db.flush()
 
     return memory
+
+
+def filter_relevant_memories(
+    memories: list[Memory],
+    task_title: str,
+    task_description: str | None = None,
+) -> list[Memory]:
+    text = f"{task_title} {task_description or ''}".lower()
+
+    stop_words = {
+        "a",
+        "an",
+        "and",
+        "about",
+        "are",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "of",
+        "on",
+        "send",
+        "the",
+        "to",
+        "with",
+        "memory",
+        "test",
+        "task",
+        "last",
+        "completed",
+    }
+
+    task_words = {
+        word.strip(".,!?;:")
+        for word in text.split()
+        if len(word.strip(".,!?;:")) >= 4
+    }
+
+    task_words -= stop_words
+
+    relevant: list[Memory] = []
+
+    for memory in memories:
+        memory_text = (
+            f"{memory.type} {memory.key} {memory.value}"
+        ).lower()
+
+        memory_words = {
+            word.strip(".,!?;:")
+            for word in memory_text.split()
+            if len(word.strip(".,!?;:")) >= 4
+        }
+
+        memory_words -= stop_words
+
+        if task_words & memory_words:
+            relevant.append(memory)
+
+    return relevant
