@@ -49,18 +49,39 @@ async def save_memory(
     agent_id: UUID | None = None,
 ) -> Memory:
 
-    memory = Memory(
-        organization_id=organization_id,
-        user_id=user_id,
-        agent_id=agent_id,
-        type=type,
-        key=key,
-        value=value,
+    query = select(Memory).where(
+        Memory.organization_id == organization_id,
+        Memory.type == type,
+        Memory.key == key,
     )
 
-    db.add(memory)
+    if user_id is not None:
+        query = query.where(Memory.user_id == user_id)
+    else:
+        query = query.where(Memory.user_id.is_(None))
 
-    await db.commit()
-    await db.refresh(memory)
+    if agent_id is not None:
+        query = query.where(Memory.agent_id == agent_id)
+    else:
+        query = query.where(Memory.agent_id.is_(None))
+
+    result = await db.execute(query)
+
+    memory = result.scalar_one_or_none()
+
+    if memory:
+        memory.value = value
+    else:
+        memory = Memory(
+            organization_id=organization_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            type=type,
+            key=key,
+            value=value,
+        )
+        db.add(memory)
+
+    await db.flush()
 
     return memory

@@ -8,6 +8,8 @@ from app.models.approval import Approval
 from app.models.task import Task
 from app.models.task_step import TaskStep
 from app.services.audit import log_audit
+from app.services.memory import get_memories
+from app.services.memory_extractor import save_task_memory
 from app.tools.google_sheets import GoogleSheetsTool
 from app.tools.gmail import GmailTool
 from app.tools.crm import CRMTool
@@ -61,10 +63,32 @@ class AgentRuntime:
         )
 
         try:
-            # 1. Generate execution plan
+            # -----------------------------------------
+            # 1. Load relevant memories
+            # -----------------------------------------
+            memories = await get_memories(
+                db=db,
+                organization_id=task.organization_id,
+                user_id=task.user_id,
+                agent_id=task.agent_id,
+            )
+
+            memory_context = [
+                {
+                    "type": memory.type,
+                    "key": memory.key,
+                    "value": memory.value,
+                }
+                for memory in memories
+            ]
+
+            # -----------------------------------------
+            # 2. Generate execution plan
+            # -----------------------------------------
             plan = await generate_plan(
                 task_title=task.title,
                 task_description=task.description,
+                memory_context=memory_context,
             )
 
             # -----------------------------------------
@@ -83,13 +107,16 @@ class AgentRuntime:
                 metadata={
                     "step_count": len(plan.steps),
                     "goal": plan.goal,
+                    "memory_count": len(memory_context),
                 },
             )
 
             # Data produced by previous steps
             context: dict = {}
 
-            # 2. Execute planned steps
+            # -----------------------------------------
+            # 3. Execute planned steps
+            # -----------------------------------------
             for step_data in plan.steps:
 
                 step = TaskStep(
@@ -205,7 +232,7 @@ class AgentRuntime:
                     }
 
             # -----------------------------------------
-            # Determine task state
+            # 4. Determine task state
             # -----------------------------------------
             pending_result = await db.execute(
                 select(Approval).where(
@@ -239,6 +266,19 @@ class AgentRuntime:
 
             else:
                 task.status = "completed"
+
+                # -----------------------------------------
+                # Save task completion memory
+                # -----------------------------------------
+                await save_task_memory(
+                    db=db,
+                    organization_id=task.organization_id,
+                    user_id=task.user_id,
+                    agent_id=task.agent_id,
+                    memory_type="workflow",
+                    key="last_completed_task",
+                    value=task.title,
+                )
 
                 # -----------------------------------------
                 # Audit: task.completed
@@ -593,6 +633,19 @@ class AgentRuntime:
 
             else:
                 task.status = "completed"
+
+                # -----------------------------------------
+                # Save task completion memory
+                # -----------------------------------------
+                await save_task_memory(
+                    db=db,
+                    organization_id=task.organization_id,
+                    user_id=task.user_id,
+                    agent_id=task.agent_id,
+                    memory_type="workflow",
+                    key="last_completed_task",
+                    value=task.title,
+                )
 
                 # -----------------------------------------
                 # Audit: task.completed

@@ -13,7 +13,26 @@ client = AsyncOpenAI(
 async def generate_plan(
     task_title: str,
     task_description: str | None,
+    memory_context: list[dict] | None = None,
 ) -> ExecutionPlan:
+
+    # -----------------------------------------
+    # Format memories for the prompt
+    # -----------------------------------------
+    memory_context = memory_context or []
+
+    memory_text = "\n".join(
+        f"- {memory['key']}: {memory['value']}"
+        for memory in memory_context
+    )
+
+    if memory_text:
+        memory_section = (
+            "\nRelevant memories from past tasks:\n"
+            f"{memory_text}\n"
+        )
+    else:
+        memory_section = ""
 
     prompt = f"""
 Create an execution plan for this AgentOS business task.
@@ -23,7 +42,7 @@ Task title:
 
 Task description:
 {task_description or "No additional description."}
-
+{memory_section}
 Available tools:
 - google_sheets
 - gmail
@@ -45,6 +64,7 @@ Rules:
 - Do not create duplicate steps for the same action.
 - If an email needs to be sent, create a separate drafting step followed by a sending step.
 - The sending step must have requires_approval=true.
+- Use memories above to inform decisions when relevant.
 """
 
     response = await client.responses.create(
