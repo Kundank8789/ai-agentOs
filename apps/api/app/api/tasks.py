@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal
+from app.auth import get_current_user, get_db
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.task import Task
@@ -21,28 +21,10 @@ router = APIRouter(
 )
 
 
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-async def get_dev_context(
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(User).where(
-            User.email == "dev@agentos.local"
-        )
-    )
-
-    user = result.scalar_one_or_none()
-
-    if user is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Development user not found. Run python -m app.seed",
-        )
-
+async def get_user_organization(
+    db: AsyncSession,
+    user: User,
+) -> Organization:
     organization = await db.get(
         Organization,
         user.organization_id,
@@ -51,19 +33,43 @@ async def get_dev_context(
     if organization is None:
         raise HTTPException(
             status_code=500,
-            detail="Development organization not found.",
+            detail="User organization not found.",
         )
 
-    return user, organization
+    return organization
+
+
+async def get_task_for_user(
+    db: AsyncSession,
+    task_id: UUID,
+    user: User,
+) -> Task:
+    result = await db.execute(
+        select(Task).where(
+            Task.id == task_id,
+            Task.organization_id == user.organization_id,
+            Task.user_id == user.id,
+        )
+    )
+
+    task = result.scalar_one_or_none()
+
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Task not found",
+        )
+
+    return task
 
 
 @router.post("/", response_model=TaskResponse)
 async def create_task(
     task_data: TaskCreate,
     db: AsyncSession = Depends(get_db),
-    context=Depends(get_dev_context),
+    user: User = Depends(get_current_user),
 ):
-    user, organization = context
+    organization = await get_user_organization(db, user)
 
     task = Task(
         organization_id=organization.id,
@@ -84,13 +90,14 @@ async def create_task(
 @router.get("/", response_model=list[TaskResponse])
 async def list_tasks(
     db: AsyncSession = Depends(get_db),
-    context=Depends(get_dev_context),
+    user: User = Depends(get_current_user),
 ):
-    _, organization = context
-
     result = await db.execute(
         select(Task)
-        .where(Task.organization_id == organization.id)
+        .where(
+            Task.organization_id == user.organization_id,
+            Task.user_id == user.id,
+        )
         .order_by(Task.created_at.desc())
     )
 
@@ -101,53 +108,27 @@ async def list_tasks(
 async def get_task(
     task_id: UUID,
     db: AsyncSession = Depends(get_db),
-    context=Depends(get_dev_context),
+    user: User = Depends(get_current_user),
 ):
-    _, organization = context
-
-    result = await db.execute(
-        select(Task).where(
-            Task.id == task_id,
-            Task.organization_id == organization.id,
-        )
+    return await get_task_for_user(
+        db=db,
+        task_id=task_id,
+        user=user,
     )
-
-    task = result.scalar_one_or_none()
-
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found",
-        )
-
-    return task
 
 
 @router.get("/{task_id}/steps")
 async def list_task_steps(
     task_id: UUID,
     db: AsyncSession = Depends(get_db),
-    context=Depends(get_dev_context),
+    user: User = Depends(get_current_user),
 ):
-    _, organization = context
-
-    # Verify task belongs to this organization
-    task_result = await db.execute(
-        select(Task).where(
-            Task.id == task_id,
-            Task.organization_id == organization.id,
-        )
+    await get_task_for_user(
+        db=db,
+        task_id=task_id,
+        user=user,
     )
 
-    task = task_result.scalar_one_or_none()
-
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found",
-        )
-
-    # Get task steps
     result = await db.execute(
         select(TaskStep)
         .where(TaskStep.task_id == task_id)
@@ -164,24 +145,13 @@ async def list_task_steps(
 async def list_task_audit_logs(
     task_id: UUID,
     db: AsyncSession = Depends(get_db),
-    context=Depends(get_dev_context),
+    user: User = Depends(get_current_user),
 ):
-    _, organization = context
-
-    task_result = await db.execute(
-        select(Task).where(
-            Task.id == task_id,
-            Task.organization_id == organization.id,
-        )
+    await get_task_for_user(
+        db=db,
+        task_id=task_id,
+        user=user,
     )
-
-    task = task_result.scalar_one_or_none()
-
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found",
-        )
 
     result = await db.execute(
         select(AuditLog)
@@ -196,24 +166,13 @@ async def list_task_audit_logs(
 async def run_task(
     task_id: UUID,
     db: AsyncSession = Depends(get_db),
-    context=Depends(get_dev_context),
+    user: User = Depends(get_current_user),
 ):
-    _, organization = context
-
-    result = await db.execute(
-        select(Task).where(
-            Task.id == task_id,
-            Task.organization_id == organization.id,
-        )
+    task = await get_task_for_user(
+        db=db,
+        task_id=task_id,
+        user=user,
     )
-
-    task = result.scalar_one_or_none()
-
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Task not found",
-        )
 
     if task.status == "running":
         raise HTTPException(
