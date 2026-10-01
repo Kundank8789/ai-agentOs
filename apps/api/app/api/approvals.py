@@ -6,9 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.runtime import AgentRuntime
-from app.database import AsyncSessionLocal
+from app.auth import get_current_user, get_db
 from app.models.approval import Approval
 from app.models.task import Task
+from app.models.user import User
 from app.services.audit import log_audit
 
 
@@ -18,17 +19,44 @@ router = APIRouter(
 )
 
 
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
+async def get_approval_for_user(
+    db: AsyncSession,
+    approval_id: UUID,
+    user: User,
+) -> Approval:
+    result = await db.execute(
+        select(Approval)
+        .join(Task, Approval.task_id == Task.id)
+        .where(
+            Approval.id == approval_id,
+            Task.organization_id == user.organization_id,
+            Task.user_id == user.id,
+        )
+    )
+
+    approval = result.scalar_one_or_none()
+
+    if approval is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval not found",
+        )
+
+    return approval
 
 
 @router.get("/")
 async def list_approvals(
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(Approval)
+        .join(Task, Approval.task_id == Task.id)
+        .where(
+            Task.organization_id == user.organization_id,
+            Task.user_id == user.id,
+        )
         .order_by(Approval.created_at.desc())
     )
 
@@ -39,14 +67,13 @@ async def list_approvals(
 async def approve_approval(
     approval_id: UUID,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    approval = await db.get(Approval, approval_id)
-
-    if approval is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Approval not found",
-        )
+    approval = await get_approval_for_user(
+        db=db,
+        approval_id=approval_id,
+        user=user,
+    )
 
     if approval.status != "pending":
         raise HTTPException(
@@ -57,9 +84,6 @@ async def approve_approval(
     approval.status = "approved"
     approval.decided_at = datetime.now(timezone.utc)
 
-    # -----------------------------------------
-    # Audit: approval.approved (human decision)
-    # -----------------------------------------
     await log_audit(
         db,
         task_id=approval.task_id,
@@ -101,14 +125,13 @@ async def approve_approval(
 async def reject_approval(
     approval_id: UUID,
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
-    approval = await db.get(Approval, approval_id)
-
-    if approval is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Approval not found",
-        )
+    approval = await get_approval_for_user(
+        db=db,
+        approval_id=approval_id,
+        user=user,
+    )
 
     if approval.status != "pending":
         raise HTTPException(
@@ -124,9 +147,6 @@ async def reject_approval(
     if task is not None:
         task.status = "failed"
 
-    # -----------------------------------------
-    # Audit: approval.rejected (human decision)
-    # -----------------------------------------
     await log_audit(
         db,
         task_id=approval.task_id,
