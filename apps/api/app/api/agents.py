@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal
+from app.auth import get_current_user, get_db
 from app.models.agent import Agent
 from app.models.user import User
 
@@ -15,35 +15,10 @@ router = APIRouter(
 )
 
 
-async def get_db():
-    async with AsyncSessionLocal() as session:
-        yield session
-
-
-async def get_dev_user(
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(User).where(
-            User.email == "dev@agentos.local"
-        )
-    )
-
-    user = result.scalar_one_or_none()
-
-    if user is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Development user not found. Run python -m app.seed",
-        )
-
-    return user
-
-
 @router.get("/")
 async def list_agents(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(Agent)
@@ -71,7 +46,7 @@ async def list_agents(
 async def get_agent(
     agent_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_dev_user),
+    user: User = Depends(get_current_user),
 ):
     result = await db.execute(
         select(Agent).where(
