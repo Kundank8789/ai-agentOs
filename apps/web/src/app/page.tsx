@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-const API_URL = "http://127.0.0.1:8000";
+import {
+  approveApproval,
+  getApprovals,
+  getTasks,
+  rejectApproval,
+} from "@/lib/api";
 
 type Task = {
   id: string;
@@ -29,17 +34,12 @@ export default function Home() {
 
   async function loadData() {
     try {
-      const [tasksResponse, approvalsResponse] = await Promise.all([
-        fetch(`${API_URL}/tasks/`),
-        fetch(`${API_URL}/approvals/`),
+      setLoading(true);
+
+      const [tasksData, approvalsData] = await Promise.all([
+        getTasks(),
+        getApprovals(),
       ]);
-
-      if (!tasksResponse.ok || !approvalsResponse.ok) {
-        throw new Error("Failed to load AgentOS data");
-      }
-
-      const tasksData = await tasksResponse.json();
-      const approvalsData = await approvalsResponse.json();
 
       setTasks(tasksData);
       setApprovals(approvalsData);
@@ -271,10 +271,11 @@ function NavItem({
   active?: boolean;
   href?: string;
 }) {
-  const className = `flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition ${active
+  const className = `flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition ${
+    active
       ? "bg-blue-500/10 text-blue-400"
       : "text-zinc-500 hover:bg-white/5 hover:text-zinc-200"
-    }`;
+  }`;
 
   if (href) {
     return (
@@ -322,8 +323,9 @@ function StatusBadge({ status }: { status: string }) {
 
   return (
     <span
-      className={`whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] ${styles[status] ?? "bg-white/5 text-zinc-400"
-        }`}
+      className={`whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] ${
+        styles[status] ?? "bg-white/5 text-zinc-400"
+      }`}
     >
       {status.replace("_", " ")}
     </span>
@@ -343,15 +345,10 @@ function ApprovalCard({
     setLoading(true);
 
     try {
-      const response = await fetch(
-        `${API_URL}/approvals/${approval.id}/${action}`,
-        {
-          method: "POST",
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to ${action} approval`);
+      if (action === "approve") {
+        await approveApproval(approval.id);
+      } else {
+        await rejectApproval(approval.id);
       }
 
       await onComplete();
