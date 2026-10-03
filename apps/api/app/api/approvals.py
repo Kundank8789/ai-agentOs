@@ -19,44 +19,19 @@ router = APIRouter(
 )
 
 
-async def get_approval_for_user(
-    db: AsyncSession,
-    approval_id: UUID,
-    user: User,
-) -> Approval:
-    result = await db.execute(
-        select(Approval)
-        .join(Task, Approval.task_id == Task.id)
-        .where(
-            Approval.id == approval_id,
-            Task.organization_id == user.organization_id,
-            Task.user_id == user.id,
-        )
-    )
-
-    approval = result.scalar_one_or_none()
-
-    if approval is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Approval not found",
-        )
-
-    return approval
-
-
 @router.get("/")
 async def list_approvals(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
+    """
+    Return approvals belonging only to the authenticated user's organization.
+    """
+
     result = await db.execute(
         select(Approval)
         .join(Task, Approval.task_id == Task.id)
-        .where(
-            Task.organization_id == user.organization_id,
-            Task.user_id == user.id,
-        )
+        .where(Task.organization_id == current_user.organization_id)
         .order_by(Approval.created_at.desc())
     )
 
@@ -67,13 +42,28 @@ async def list_approvals(
 async def approve_approval(
     approval_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    approval = await get_approval_for_user(
-        db=db,
-        approval_id=approval_id,
-        user=user,
+    """
+    Approve an action only if it belongs to the current user's organization.
+    """
+
+    result = await db.execute(
+        select(Approval)
+        .join(Task, Approval.task_id == Task.id)
+        .where(
+            Approval.id == approval_id,
+            Task.organization_id == current_user.organization_id,
+        )
     )
+
+    approval = result.scalar_one_or_none()
+
+    if approval is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval not found",
+        )
 
     if approval.status != "pending":
         raise HTTPException(
@@ -94,6 +84,8 @@ async def approve_approval(
         message=f"Approval granted for {approval.action}.",
         metadata={
             "approval_id": str(approval.id),
+            "user_id": str(current_user.id),
+            "organization_id": str(current_user.organization_id),
         },
     )
 
@@ -125,13 +117,28 @@ async def approve_approval(
 async def reject_approval(
     approval_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    approval = await get_approval_for_user(
-        db=db,
-        approval_id=approval_id,
-        user=user,
+    """
+    Reject an action only if it belongs to the current user's organization.
+    """
+
+    result = await db.execute(
+        select(Approval)
+        .join(Task, Approval.task_id == Task.id)
+        .where(
+            Approval.id == approval_id,
+            Task.organization_id == current_user.organization_id,
+        )
     )
+
+    approval = result.scalar_one_or_none()
+
+    if approval is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Approval not found",
+        )
 
     if approval.status != "pending":
         raise HTTPException(
@@ -157,6 +164,8 @@ async def reject_approval(
         message=f"Approval rejected for {approval.action}.",
         metadata={
             "approval_id": str(approval.id),
+            "user_id": str(current_user.id),
+            "organization_id": str(current_user.organization_id),
         },
     )
 

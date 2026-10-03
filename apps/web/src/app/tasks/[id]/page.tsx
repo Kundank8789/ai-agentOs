@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { use, useCallback, useEffect, useState } from "react";
 
-const API_URL = "http://127.0.0.1:8000";
+import {
+  getTask,
+  getTaskSteps,
+  getTaskAudit,
+  runTask,
+} from "@/lib/api";
 
 type Task = {
   id: string;
@@ -63,20 +68,11 @@ export default function TaskDetailsPage({ params }: PageProps) {
     try {
       setError("");
 
-      const [taskResponse, stepsResponse, auditResponse] =
-        await Promise.all([
-          fetch(`${API_URL}/tasks/${id}`, { cache: "no-store" }),
-          fetch(`${API_URL}/tasks/${id}/steps`, { cache: "no-store" }),
-          fetch(`${API_URL}/tasks/${id}/audit`, { cache: "no-store" }),
-        ]);
-
-      if (!taskResponse.ok) {
-        throw new Error("Failed to load task");
-      }
-
-      const taskData = await taskResponse.json();
-      const stepsData = stepsResponse.ok ? await stepsResponse.json() : [];
-      const auditData = auditResponse.ok ? await auditResponse.json() : [];
+      const [taskData, stepsData, auditData] = await Promise.all([
+        getTask(id),
+        getTaskSteps(id),
+        getTaskAudit(id),
+      ]);
 
       setTask(taskData);
       setSteps(Array.isArray(stepsData) ? stepsData : []);
@@ -97,10 +93,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
   useEffect(() => {
     if (!task) return;
 
-    if (
-      task.status !== "running" &&
-      task.status !== "planned"
-    ) {
+    if (task.status !== "running" && task.status !== "planned") {
       return;
     }
 
@@ -111,30 +104,20 @@ export default function TaskDetailsPage({ params }: PageProps) {
     return () => clearInterval(interval);
   }, [task, loadTaskData]);
 
-  async function runTask() {
+  async function handleRunTask() {
     try {
       setRunning(true);
       setError("");
 
-      const response = await fetch(`${API_URL}/tasks/${id}/run`, {
-        method: "POST",
-      });
+      const updatedTask = await runTask(id);
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data?.detail || "Task execution failed");
-      }
-
-      setTask(data);
+      setTask(updatedTask);
       await loadTaskData();
     } catch (err) {
       console.error(err);
 
       setError(
-        err instanceof Error
-          ? err.message
-          : "Task execution failed."
+        err instanceof Error ? err.message : "Task execution failed."
       );
     } finally {
       setRunning(false);
@@ -163,22 +146,18 @@ export default function TaskDetailsPage({ params }: PageProps) {
           </Link>
 
           <div className="mt-8 rounded-2xl border border-red-500/20 bg-red-500/5 p-6">
-            <p className="text-red-400">
-              {error || "Task not found."}
-            </p>
+            <p className="text-red-400">{error || "Task not found."}</p>
           </div>
         </div>
       </main>
     );
   }
 
-  const needsApproval =
-    task.status === "waiting_approval";
+  const needsApproval = task.status === "waiting_approval";
 
   return (
     <main className="min-h-screen bg-[#09090b] p-6 text-white md:p-10">
       <div className="mx-auto max-w-6xl">
-
         {/* Back */}
         <Link
           href="/tasks"
@@ -190,7 +169,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
         {/* Header */}
         <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.02] p-6 md:p-8">
           <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
-
             <div className="max-w-3xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <StatusBadge status={task.status} />
@@ -220,7 +198,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
               </button>
 
               <button
-                onClick={runTask}
+                onClick={handleRunTask}
                 disabled={running || task.status === "running"}
                 className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -265,7 +243,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
 
         {/* Main grid */}
         <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-
           {/* Execution Steps */}
           <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
             <div className="flex items-center justify-between">
@@ -307,9 +284,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
 
           {/* Current Status */}
           <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
-            <h2 className="text-lg font-semibold">
-              Current Status
-            </h2>
+            <h2 className="text-lg font-semibold">Current Status</h2>
 
             <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
               <p className="text-xs uppercase tracking-wider text-zinc-600">
@@ -338,21 +313,9 @@ export default function TaskDetailsPage({ params }: PageProps) {
             </div>
 
             <div className="mt-5 grid gap-3">
-              <InfoRow
-                label="Task ID"
-                value={task.id}
-              />
-
-              <InfoRow
-                label="Created"
-                value={formatDate(task.created_at)}
-              />
-
-              <InfoRow
-                label="Updated"
-                value={formatDate(task.updated_at)}
-              />
-
+              <InfoRow label="Task ID" value={task.id} />
+              <InfoRow label="Created" value={formatDate(task.created_at)} />
+              <InfoRow label="Updated" value={formatDate(task.updated_at)} />
               <InfoRow
                 label="Agent"
                 value={task.agent_id || "Not assigned"}
@@ -364,9 +327,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
         {/* Audit Timeline */}
         <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
           <div>
-            <h2 className="text-lg font-semibold">
-              Audit Timeline
-            </h2>
+            <h2 className="text-lg font-semibold">Audit Timeline</h2>
 
             <p className="mt-1 text-sm text-zinc-500">
               Everything the runtime and human operators did.
@@ -442,9 +403,7 @@ function StepCard({
     status === "approval_required" ||
     status === "pending_approval";
 
-  const isFailed =
-    status === "failed" ||
-    status === "error";
+  const isFailed = status === "failed" || status === "error";
 
   return (
     <div className="flex gap-4 rounded-xl border border-white/10 bg-black/20 p-4">
@@ -466,9 +425,7 @@ function StepCard({
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-medium text-zinc-200">
-            {title}
-          </h3>
+          <h3 className="font-medium text-zinc-200">{title}</h3>
 
           <span
             className={`text-xs capitalize ${
@@ -488,9 +445,7 @@ function StepCard({
         </div>
 
         {description && (
-          <p className="mt-1 text-sm text-zinc-500">
-            {description}
-          </p>
+          <p className="mt-1 text-sm text-zinc-500">{description}</p>
         )}
       </div>
     </div>
@@ -526,15 +481,11 @@ function AuditEvent({
         </div>
 
         {log.message && (
-          <p className="mt-1 text-sm text-zinc-500">
-            {log.message}
-          </p>
+          <p className="mt-1 text-sm text-zinc-500">{log.message}</p>
         )}
 
         {log.action && !log.message && (
-          <p className="mt-1 text-sm text-zinc-500">
-            {log.action}
-          </p>
+          <p className="mt-1 text-sm text-zinc-500">{log.action}</p>
         )}
 
         <p className="mt-2 text-xs text-zinc-700">
@@ -555,8 +506,7 @@ function StatusBadge({ status }: { status: string }) {
     running: "bg-blue-500/10 text-blue-400",
     pending: "bg-zinc-500/10 text-zinc-400",
     planned: "bg-purple-500/10 text-purple-400",
-    waiting_approval:
-      "bg-yellow-500/10 text-yellow-400",
+    waiting_approval: "bg-yellow-500/10 text-yellow-400",
     failed: "bg-red-500/10 text-red-400",
   };
 
@@ -584,9 +534,7 @@ function InfoRow({
         {label}
       </p>
 
-      <p className="mt-1 break-all text-sm text-zinc-400">
-        {value}
-      </p>
+      <p className="mt-1 break-all text-sm text-zinc-400">{value}</p>
     </div>
   );
 }
@@ -604,9 +552,7 @@ function MetadataCard({
         {title}
       </p>
 
-      <p className="mt-2 break-all text-sm text-zinc-400">
-        {value}
-      </p>
+      <p className="mt-2 break-all text-sm text-zinc-400">{value}</p>
     </div>
   );
 }

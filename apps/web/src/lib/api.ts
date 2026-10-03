@@ -127,6 +127,16 @@ export async function getTasks() {
   return response.json();
 }
 
+export async function getTask(taskId: string) {
+  const response = await apiFetch(`/tasks/${taskId}`);
+
+  if (!response.ok) {
+    throw new Error("Failed to load task");
+  }
+
+  return response.json();
+}
+
 export async function getApprovals() {
   const response = await apiFetch("/approvals/");
 

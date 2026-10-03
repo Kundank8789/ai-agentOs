@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+import {
+  getApprovals,
+  approveApproval,
+  rejectApproval,
+} from "@/lib/api";
 
 type Approval = {
   id: string;
@@ -25,14 +29,9 @@ export default function ApprovalsPage() {
     try {
       setLoading(true);
 
-      const response = await fetch(`${API_URL}/approvals/`);
+      const data = await getApprovals();
 
-      if (!response.ok) {
-        throw new Error("Failed to load approvals");
-      }
-
-      const data = await response.json();
-      setApprovals(data);
+      setApprovals(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Approvals fetch error:", error);
     } finally {
@@ -51,19 +50,10 @@ export default function ApprovalsPage() {
     try {
       setProcessing(approvalId);
 
-      const response = await fetch(
-        `${API_URL}/approvals/${approvalId}/${decision}`,
-        {
-          method: "POST",
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-
-        throw new Error(
-          errorData?.detail || `Failed to ${decision} approval`
-        );
+      if (decision === "approve") {
+        await approveApproval(approvalId);
+      } else {
+        await rejectApproval(approvalId);
       }
 
       await loadApprovals();
