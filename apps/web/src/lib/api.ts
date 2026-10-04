@@ -238,3 +238,37 @@ export async function rejectApproval(
 
   return response.json();
 }
+
+export type Agent = {
+  id: string;
+  organization_id: string;
+  name: string;
+  description?: string | null;
+  status: string;
+  created_at: string;
+  updated_at?: string | null;
+};
+
+export async function getAgents(): Promise<Agent[]> {
+  const response = await apiFetch("/agents/");
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to fetch agents");
+  }
+
+  const data = await response.json();
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAgent(agentId: string): Promise<Agent> {
+  const response = await apiFetch(`/agents/${agentId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to fetch agent");
+  }
+
+  return response.json();
+}
