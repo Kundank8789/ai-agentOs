@@ -60,6 +60,14 @@ async function apiFetch(
 
   if (response.status === 401) {
     clearToken();
+
+    if (typeof window !== "undefined") {
+      const currentPath = window.location.pathname;
+
+      if (currentPath !== "/login" && currentPath !== "/signup") {
+        window.location.href = `/login?next=${encodeURIComponent(currentPath)}`;
+      }
+    }
   }
 
   return response;
@@ -268,6 +276,53 @@ export async function getAgent(agentId: string): Promise<Agent> {
   if (!response.ok) {
     const error = await response.json().catch(() => null);
     throw new Error(error?.detail || "Failed to fetch agent");
+  }
+
+  return response.json();
+}
+
+export type Memory = {
+  id: string;
+  organization_id: string;
+  user_id?: string | null;
+  agent_id?: string | null;
+  type: string;
+  key: string;
+  value: string;
+};
+
+export async function getMemories(): Promise<Memory[]> {
+  const response = await apiFetch("/memories/");
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to fetch memories");
+  }
+
+  const data = await response.json();
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createMemory(
+  type: string,
+  key: string,
+  value: string,
+  agentId?: string,
+): Promise<Memory> {
+  const response = await apiFetch("/memories/", {
+    method: "POST",
+    body: JSON.stringify({
+      type,
+      key,
+      value,
+      agent_id: agentId || null,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to create memory");
   }
 
   return response.json();
