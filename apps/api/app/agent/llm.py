@@ -53,6 +53,8 @@ Available tools:
 
 Rules:
 - Only use tools from the available tools list.
+- Every plan step MUST specify exactly one tool.
+- The tool field MUST never be null.
 - Do not execute anything while planning.
 - Reading data from Google Sheets does not require approval.
 - Identifying or filtering customers does not require approval.
@@ -64,6 +66,7 @@ Rules:
 - Do not create duplicate steps for the same action.
 - If an email needs to be sent, create a separate drafting step followed by a sending step.
 - The sending step must have requires_approval=true.
+- Preparing an execution report must use google_sheets.
 - Use memories above to inform decisions when relevant.
 """
 

@@ -210,6 +210,31 @@ class AgentRuntime:
                     continue
 
                 # -----------------------------------------
+                # Safety check: reject steps with no tool
+                # -----------------------------------------
+                if not step_data.tool:
+                    step.status = "failed"
+                    step.output = {
+                        "error": "Execution plan step is missing a tool."
+                    }
+
+                    await log_audit(
+                        db,
+                        task_id=task.id,
+                        task_step_id=step.id,
+                        event_type="step.failed",
+                        actor_type="agent",
+                        action="validate_plan_step",
+                        message="Execution plan step is missing a tool.",
+                        metadata={
+                            "step_number": step_data.step_number,
+                            "step_name": step_data.name,
+                        },
+                    )
+
+                    continue
+
+                # -----------------------------------------
                 # Execute non-approval step
                 # -----------------------------------------
                 result = await self._execute_step(
