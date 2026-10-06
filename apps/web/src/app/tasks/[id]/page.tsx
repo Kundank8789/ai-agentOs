@@ -8,6 +8,8 @@ import {
   getTaskSteps,
   getTaskAudit,
   runTask,
+  getAgent,
+  type Agent,
 } from "@/lib/api";
 
 type Task = {
@@ -57,11 +59,13 @@ export default function TaskDetailsPage({ params }: PageProps) {
   const { id } = use(params);
 
   const [task, setTask] = useState<Task | null>(null);
+  const [agent, setAgent] = useState<Agent | null>(null);
   const [steps, setSteps] = useState<TaskStep[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
   const loadTaskData = useCallback(async () => {
@@ -77,6 +81,20 @@ export default function TaskDetailsPage({ params }: PageProps) {
       setTask(taskData);
       setSteps(Array.isArray(stepsData) ? stepsData : []);
       setAuditLogs(Array.isArray(auditData) ? auditData : []);
+
+      // -----------------------------------------
+      // Fetch the assigned agent (if any)
+      // -----------------------------------------
+      if (taskData.agent_id) {
+        try {
+          const agentData = await getAgent(taskData.agent_id);
+          setAgent(agentData);
+        } catch {
+          setAgent(null);
+        }
+      } else {
+        setAgent(null);
+      }
     } catch (err) {
       console.error(err);
       setError("Unable to load task information.");
@@ -103,6 +121,15 @@ export default function TaskDetailsPage({ params }: PageProps) {
 
     return () => clearInterval(interval);
   }, [task, loadTaskData]);
+
+  async function handleRefresh() {
+    try {
+      setRefreshing(true);
+      await loadTaskData();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function handleRunTask() {
     try {
@@ -175,7 +202,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
 
                 {task.agent_id && (
                   <span className="rounded-full bg-blue-500/10 px-3 py-1 text-xs text-blue-400">
-                    Agent assigned
+                    {agent ? `🤖 ${agent.name}` : "Agent assigned"}
                   </span>
                 )}
               </div>
@@ -191,10 +218,11 @@ export default function TaskDetailsPage({ params }: PageProps) {
 
             <div className="flex flex-wrap gap-3">
               <button
-                onClick={loadTaskData}
-                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-300 transition hover:bg-white/10"
+                onClick={handleRefresh}
+                disabled={refreshing}
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Refresh
+                {refreshing ? "Refreshing..." : "Refresh"}
               </button>
 
               <button
@@ -316,10 +344,28 @@ export default function TaskDetailsPage({ params }: PageProps) {
               <InfoRow label="Task ID" value={task.id} />
               <InfoRow label="Created" value={formatDate(task.created_at)} />
               <InfoRow label="Updated" value={formatDate(task.updated_at)} />
-              <InfoRow
-                label="Agent"
-                value={task.agent_id || "Not assigned"}
-              />
+
+              {/* Agent info */}
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                <p className="text-[10px] uppercase tracking-wider text-zinc-600">
+                  Agent
+                </p>
+
+                {agent ? (
+                  <div className="mt-2">
+                    <p className="font-medium text-white">
+                      🤖 {agent.name}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      {agent.status}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-zinc-400">
+                    Not assigned
+                  </p>
+                )}
+              </div>
             </div>
           </section>
         </div>

@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,37 @@ router = APIRouter(
 )
 
 
+class AgentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=255)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/", status_code=201)
+async def create_agent(
+    agent_data: AgentCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    agent = Agent(
+        organization_id=user.organization_id,
+        name=agent_data.name,
+        description=agent_data.description,
+        status="active",
+    )
+
+    db.add(agent)
+    await db.commit()
+    await db.refresh(agent)
+
+    return {
+        "id": str(agent.id),
+        "name": agent.name,
+        "description": agent.description,
+        "status": agent.status,
+        "created_at": agent.created_at,
+    }
+
+
 @router.get("/")
 async def list_agents(
     db: AsyncSession = Depends(get_db),
@@ -22,9 +54,7 @@ async def list_agents(
 ):
     result = await db.execute(
         select(Agent)
-        .where(
-            Agent.organization_id == user.organization_id
-        )
+        .where(Agent.organization_id == user.organization_id)
         .order_by(Agent.created_at.asc())
     )
 

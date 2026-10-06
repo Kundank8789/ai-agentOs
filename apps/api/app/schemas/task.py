@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict
 class TaskCreate(BaseModel):
     title: str
     description: str | None = None
+    agent_id: UUID | None = None
 
 
 class TaskResponse(BaseModel):

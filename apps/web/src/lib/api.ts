@@ -158,17 +158,20 @@ export async function getApprovals() {
 export async function createTask(
   title: string,
   description: string,
+  agentId?: string,
 ) {
   const response = await apiFetch("/tasks/", {
     method: "POST",
     body: JSON.stringify({
       title,
       description,
+      agent_id: agentId || null,
     }),
   });
 
   if (!response.ok) {
-    throw new Error("Failed to create task");
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to create task");
   }
 
   return response.json();
@@ -268,6 +271,26 @@ export async function getAgents(): Promise<Agent[]> {
   const data = await response.json();
 
   return Array.isArray(data) ? data : [];
+}
+
+export async function createAgent(
+  name: string,
+  description: string,
+): Promise<Agent> {
+  const response = await apiFetch("/agents/", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      description,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to create agent");
+  }
+
+  return response.json();
 }
 
 export async function getAgent(agentId: string): Promise<Agent> {

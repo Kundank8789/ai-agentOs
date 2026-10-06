@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, get_db
+from app.models.agent import Agent
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.task import Task
@@ -71,9 +72,38 @@ async def create_task(
 ):
     organization = await get_user_organization(db, user)
 
+    # -----------------------------------------
+    # Validate selected agent (if provided)
+    # -----------------------------------------
+    if task_data.agent_id is not None:
+        agent_result = await db.execute(
+            select(Agent).where(
+                Agent.id == task_data.agent_id,
+                Agent.organization_id == organization.id,
+            )
+        )
+
+        agent = agent_result.scalar_one_or_none()
+
+        if agent is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Selected agent not found in your organization.",
+            )
+
+        if agent.status != "active":
+            raise HTTPException(
+                status_code=409,
+                detail="Selected agent is not active.",
+            )
+
+    # -----------------------------------------
+    # Create task
+    # -----------------------------------------
     task = Task(
         organization_id=organization.id,
         user_id=user.id,
+        agent_id=task_data.agent_id,
         title=task_data.title,
         description=task_data.description,
         status="pending",

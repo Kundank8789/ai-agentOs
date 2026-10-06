@@ -1,9 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { getAgents, type Agent } from "@/lib/api";
+import {
+  createAgent,
+  getAgents,
+  type Agent,
+} from "@/lib/api";
 
 const capabilities = [
   "Google Sheets",
@@ -17,6 +21,11 @@ export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [agentName, setAgentName] = useState("");
+  const [agentDescription, setAgentDescription] = useState("");
+  const [creating, setCreating] = useState(false);
 
   async function loadAgents() {
     try {
@@ -35,6 +44,43 @@ export default function AgentsPage() {
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleCreateAgent(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
+    if (!agentName.trim()) {
+      setError("Agent name is required.");
+      return;
+    }
+
+    try {
+      setCreating(true);
+      setError("");
+
+      await createAgent(
+        agentName.trim(),
+        agentDescription.trim(),
+      );
+
+      setAgentName("");
+      setAgentDescription("");
+      setShowCreateForm(false);
+
+      await loadAgents();
+    } catch (error) {
+      console.error("Create agent error:", error);
+
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to create agent",
+      );
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -85,15 +131,97 @@ export default function AgentsPage() {
               </p>
             </div>
 
-            <button
-              onClick={loadAgents}
-              disabled={loading}
-              className="rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? "Refreshing..." : "Refresh"}
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() =>
+                  setShowCreateForm((value) => !value)
+                }
+                className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500"
+              >
+                + Create AI Employee
+              </button>
+
+              <button
+                onClick={loadAgents}
+                disabled={loading}
+                className="rounded-lg border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-zinc-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {loading ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
           </div>
         </header>
+
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-400">
+            {error}
+          </div>
+        )}
+
+        {showCreateForm && (
+          <section className="mb-8 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+            <div className="mb-5">
+              <h2 className="text-xl font-medium">
+                Create AI Employee
+              </h2>
+
+              <p className="mt-1 text-sm text-zinc-500">
+                Configure an AI employee for your business operations.
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateAgent} className="space-y-5">
+              <div>
+                <label className="mb-2 block text-sm font-medium text-zinc-300">
+                  Name
+                </label>
+
+                <input
+                  value={agentName}
+                  onChange={(event) =>
+                    setAgentName(event.target.value)
+                  }
+                  placeholder="Operations Agent"
+                  className="w-full rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-blue-500/50"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-zinc-300">
+                  Description
+                </label>
+
+                <textarea
+                  value={agentDescription}
+                  onChange={(event) =>
+                    setAgentDescription(event.target.value)
+                  }
+                  placeholder="Handles orders, CRM updates, customer follow-ups and business operations."
+                  rows={4}
+                  className="w-full resize-none rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-blue-500/50"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateForm(false)}
+                  className="rounded-lg border border-white/10 px-4 py-2.5 text-sm text-zinc-300 hover:bg-white/5"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                >
+                  {creating ? "Creating..." : "Create AI Employee"}
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
 
         <section className="grid gap-4 md:grid-cols-3">
           <StatCard
@@ -117,8 +245,6 @@ export default function AgentsPage() {
 
         {loading ? (
           <LoadingState />
-        ) : error ? (
-          <ErrorState message={error} onRetry={loadAgents} />
         ) : agents.length === 0 ? (
           <EmptyState />
         ) : (
@@ -142,10 +268,7 @@ export default function AgentsPage() {
 
             <div className="grid gap-5 lg:grid-cols-2">
               {agents.map((agent) => (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                />
+                <AgentCard key={agent.id} agent={agent} />
               ))}
             </div>
           </section>
@@ -170,13 +293,9 @@ function StatCard({
         {label}
       </p>
 
-      <p className="mt-3 text-3xl font-semibold">
-        {value}
-      </p>
+      <p className="mt-3 text-3xl font-semibold">{value}</p>
 
-      <p className="mt-1 text-sm text-zinc-500">
-        {description}
-      </p>
+      <p className="mt-1 text-sm text-zinc-500">{description}</p>
     </div>
   );
 }
@@ -203,17 +322,13 @@ function AgentCard({ agent }: { agent: Agent }) {
             <div className="mt-1 flex items-center gap-2">
               <span
                 className={`h-2 w-2 rounded-full ${
-                  active
-                    ? "bg-green-400"
-                    : "bg-zinc-600"
+                  active ? "bg-green-400" : "bg-zinc-600"
                 }`}
               />
 
               <span
                 className={`text-xs capitalize ${
-                  active
-                    ? "text-green-400"
-                    : "text-zinc-500"
+                  active ? "text-green-400" : "text-zinc-500"
                 }`}
               >
                 {agent.status}
@@ -250,10 +365,7 @@ function AgentCard({ agent }: { agent: Agent }) {
       </div>
 
       <div className="mt-5 flex items-center justify-between text-xs text-zinc-600">
-        <span>
-          Created{" "}
-          {formatDate(agent.created_at)}
-        </span>
+        <span>Created {formatDate(agent.created_at)}</span>
 
         <span className="text-blue-400 opacity-0 transition group-hover:opacity-100">
           View agent →
@@ -285,9 +397,7 @@ function ErrorState({
 }) {
   return (
     <section className="mt-8 rounded-2xl border border-red-500/20 bg-red-500/5 p-8 text-center">
-      <p className="text-red-400">
-        {message}
-      </p>
+      <p className="text-red-400">{message}</p>
 
       <button
         onClick={onRetry}
@@ -306,9 +416,7 @@ function EmptyState() {
         ✦
       </div>
 
-      <h2 className="mt-5 text-xl font-medium">
-        No agents yet
-      </h2>
+      <h2 className="mt-5 text-xl font-medium">No agents yet</h2>
 
       <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-zinc-500">
         Your workspace does not have any AI employees configured yet.

@@ -3,7 +3,12 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 
-import { createTask, getTasks } from "@/lib/api";
+import {
+  createTask,
+  getAgents,
+  getTasks,
+  type Agent,
+} from "@/lib/api";
 
 type Task = {
   id: string;
@@ -16,6 +21,8 @@ type Task = {
 
 export default function TasksPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
 
@@ -24,13 +31,18 @@ export default function TasksPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  async function loadTasks() {
+  async function loadData() {
     try {
       setLoading(true);
       setError("");
 
-      const data = await getTasks();
-      setTasks(data);
+      const [tasksData, agentsData] = await Promise.all([
+        getTasks(),
+        getAgents(),
+      ]);
+
+      setTasks(tasksData);
+      setAgents(agentsData);
     } catch (error) {
       console.error(error);
       setError(
@@ -42,7 +54,7 @@ export default function TasksPage() {
   }
 
   useEffect(() => {
-    loadTasks();
+    loadData();
   }, []);
 
   async function handleCreateTask(event: FormEvent<HTMLFormElement>) {
@@ -64,14 +76,19 @@ export default function TasksPage() {
     try {
       setCreating(true);
 
-      await createTask(title.trim(), description.trim());
+      await createTask(
+        title.trim(),
+        description.trim(),
+        selectedAgentId || undefined,
+      );
 
       setTitle("");
       setDescription("");
+      setSelectedAgentId("");
 
       setSuccess("Task created successfully.");
 
-      await loadTasks();
+      await loadData();
     } catch (error) {
       console.error(error);
       setError(
@@ -122,7 +139,7 @@ export default function TasksPage() {
               </div>
 
               <button
-                onClick={loadTasks}
+                onClick={loadData}
                 disabled={loading}
                 className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/10 disabled:opacity-50"
               >
@@ -198,6 +215,37 @@ export default function TasksPage() {
                     rows={5}
                     className="w-full resize-none rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none transition placeholder:text-zinc-700 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30"
                   />
+                </div>
+
+                {/* AI Employee selector */}
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-zinc-300">
+                    AI Employee
+                  </label>
+
+                  <select
+                    value={selectedAgentId}
+                    onChange={(event) =>
+                      setSelectedAgentId(event.target.value)
+                    }
+                    className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none focus:border-blue-500"
+                  >
+                    <option value="">Select an AI employee</option>
+
+                    {agents
+                      .filter((agent) => agent.status === "active")
+                      .map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </option>
+                      ))}
+                  </select>
+
+                  {agents.length === 0 && (
+                    <p className="mt-2 text-sm text-yellow-400">
+                      No active AI employees are available.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex justify-end">
