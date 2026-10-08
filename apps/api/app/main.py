@@ -7,6 +7,7 @@ from app.api.approvals import router as approvals_router
 from app.api.agents import router as agents_router
 from app.api import memories
 from app.api import auth
+from app.api import audit
 
 
 app = FastAPI(
@@ -36,7 +37,7 @@ app.include_router(approvals_router)
 app.include_router(agents_router)
 app.include_router(memories.router)
 app.include_router(auth.router)
-
+app.include_router(audit.router)
 
 @app.get("/health")
 async def health():
