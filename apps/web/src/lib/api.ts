@@ -350,3 +350,30 @@ export async function createMemory(
 
   return response.json();
 }
+export type AuditLog = {
+  id: string;
+  task_id: string | null;
+  task_step_id: string | null;
+  tool_call_id: string | null;
+  event_type: string;
+  actor_type: string;
+  action: string;
+  message: string | null;
+  event_metadata: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export async function getAuditLogs(): Promise<AuditLog[]> {
+  const response = await apiFetch("/audit-logs/");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch audit logs");
+  }
+
+  const data = await response.json();
+
+  return Array.isArray(data) ? data : [];
+}
+
+
+
