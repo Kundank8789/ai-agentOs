@@ -232,12 +232,33 @@ export default function AuditPage() {
                       {filteredLogs.map((log) => (
                         <tr
                           key={log.id}
-                          className="transition hover:bg-white/[0.03]"
+                          className={`transition ${
+                            log.task_id
+                              ? "cursor-pointer hover:bg-white/[0.05]"
+                              : "hover:bg-white/[0.03]"
+                          }`}
+                          onClick={() => {
+                            if (log.task_id) {
+                              window.location.href = `/tasks/${log.task_id}`;
+                            }
+                          }}
                         >
                           <td className="px-5 py-4">
-                            <span className="rounded-md bg-blue-500/10 px-2 py-1 text-xs font-medium text-blue-400">
+                            <span
+                              className={`rounded-md px-2 py-1 text-xs font-medium ${
+                                log.task_id
+                                  ? "bg-blue-500/10 text-blue-400"
+                                  : "bg-zinc-500/10 text-zinc-400"
+                              }`}
+                            >
                               {formatEventType(log.event_type)}
                             </span>
+
+                            {log.task_id && (
+                              <p className="mt-1 text-[11px] text-zinc-600">
+                                View task →
+                              </p>
+                            )}
                           </td>
 
                           <td className="px-5 py-4 text-sm">
