@@ -52,6 +52,8 @@ export default function AuditPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [eventTypeFilter, setEventTypeFilter] = useState("all");
 
   async function loadLogs() {
     try {
@@ -80,10 +82,27 @@ export default function AuditPage() {
     loadLogs();
   }, []);
 
-  const filteredLogs =
-    filter === "all"
-      ? logs
-      : logs.filter((log) => log.actor_type === filter);
+  const filteredLogs = logs.filter((log) => {
+    const matchesActor =
+      filter === "all" || log.actor_type === filter;
+
+    const query = searchQuery.trim().toLowerCase();
+
+    const matchesSearch =
+      !query ||
+      [
+        log.action,
+        log.message ?? "",
+        log.event_type,
+        log.task_id ?? "",
+      ].some((value) => value.toLowerCase().includes(query));
+
+    const matchesEventType =
+      eventTypeFilter === "all" ||
+      log.event_type === eventTypeFilter;
+
+    return matchesActor && matchesSearch && matchesEventType;
+  });
 
   return (
     <main className="min-h-screen bg-[#09090b] text-white">
@@ -166,6 +185,31 @@ export default function AuditPage() {
               </div>
             </div>
 
+            <div className="mb-5 grid gap-3 md:grid-cols-[1fr_240px]">
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search action, message, event type, or task ID..."
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-zinc-500 focus:border-blue-500"
+              />
+
+              <select
+                value={eventTypeFilter}
+                onChange={(event) => setEventTypeFilter(event.target.value)}
+                className="rounded-lg border border-white/10 bg-zinc-900 px-4 py-3 text-sm text-white outline-none focus:border-blue-500"
+              >
+                <option value="all">All event types</option>
+                {[...new Set(logs.map((log) => log.event_type))]
+                  .sort()
+                  .map((eventType) => (
+                    <option key={eventType} value={eventType}>
+                      {formatEventType(eventType)}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
             <div className="mb-5 flex flex-wrap gap-2">
               {["all", "agent", "user"].map((value) => (
                 <button
@@ -201,7 +245,7 @@ export default function AuditPage() {
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-10 text-center">
                 <p className="font-medium">No audit events found</p>
                 <p className="mt-1 text-sm text-zinc-500">
-                  AgentOS activity will appear here as tasks run.
+                  Try adjusting your search or filters.
                 </p>
               </div>
             ) : (
