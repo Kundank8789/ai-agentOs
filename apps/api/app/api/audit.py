@@ -1,4 +1,3 @@
-from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -20,11 +19,8 @@ async def list_audit_logs(
 ):
     result = await db.execute(
         select(AuditLog)
-        .join(Task, AuditLog.task_id == Task.id, isouter=True)
-        .where(
-            (AuditLog.task_id.is_(None))
-            | (Task.organization_id == user.organization_id)
-        )
+        .join(Task, AuditLog.task_id == Task.id)
+        .where(Task.organization_id == user.organization_id)
         .order_by(AuditLog.created_at.desc())
         .limit(200)
     )
