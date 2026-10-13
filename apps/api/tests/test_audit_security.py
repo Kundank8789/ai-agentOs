@@ -8,6 +8,9 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.api.tasks import get_task_for_user
 from app.api.audit import list_audit_logs
+from app.api.approvals import list_approvals
+from app.api.agents import get_agent
+from app.api.memories import get_memory_for_user
 
 client = TestClient(app)
 
@@ -95,3 +98,41 @@ async def test_audit_query_is_scoped_to_user_organization():
     assert "join tasks" in sql
     assert "tasks.organization_id" in sql
     assert organization_id in compiled.params.values()
+
+
+@pytest.mark.asyncio
+async def test_approval_list_is_scoped_to_organization():
+    db = FakeDB()
+    organization_id = uuid4()
+    user = SimpleNamespace(
+        id=uuid4(),
+        organization_id=organization_id,
+    )
+
+    result = await list_approvals(db=db, current_user=user)
+
+    assert result == []
+    assert "tasks.organization_id" in str(db.statement)
+
+    compiled = db.statement.compile()
+    assert organization_id in compiled.params.values()
+
+
+@pytest.mark.asyncio
+async def test_agent_detail_is_scoped_to_organization():
+    db = FakeDB()
+    user = SimpleNamespace(
+        id=uuid4(),
+        organization_id=uuid4(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_agent(
+            agent_id=uuid4(),
+            db=db,
+            user=user,
+        )
+
+    assert exc_info.value.status_code == 404
+    sql = str(db.statement)
+    assert "agents.organization_id" in sql
