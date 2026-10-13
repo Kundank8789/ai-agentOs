@@ -278,12 +278,18 @@ class AgentRuntime:
 
             pending_approvals = pending_result.scalars().all()
 
+            failed_result = await db.execute(
+                select(TaskStep).where(
+                    TaskStep.task_id == task.id,
+                    TaskStep.status == "failed",
+                )
+            )
+
+            failed_steps = failed_result.scalars().all()
+
             if pending_approvals:
                 task.status = "waiting_approval"
 
-                # -----------------------------------------
-                # Audit: task.waiting_approval
-                # -----------------------------------------
                 await log_audit(
                     db,
                     task_id=task.id,
@@ -291,20 +297,36 @@ class AgentRuntime:
                     actor_type="system",
                     action="pause_for_approval",
                     message=(
-                        f"Task paused — "
-                        f"{len(pending_approvals)} approval(s) pending."
+                        f"Task paused — {len(pending_approvals)} "
+                        "approval(s) pending."
                     ),
                     metadata={
                         "pending_count": len(pending_approvals),
+                        "failed_step_count": len(failed_steps),
+                    },
+                )
+
+            elif failed_steps:
+                task.status = "failed"
+
+                await log_audit(
+                    db,
+                    task_id=task.id,
+                    event_type="task.failed",
+                    actor_type="system",
+                    action="fail_task",
+                    message=(
+                        "Task failed — one or more steps "
+                        "did not complete successfully."
+                    ),
+                    metadata={
+                        "failed_step_count": len(failed_steps),
                     },
                 )
 
             else:
                 task.status = "completed"
 
-                # -----------------------------------------
-                # Save task completion memory
-                # -----------------------------------------
                 await save_task_memory(
                     db=db,
                     organization_id=task.organization_id,
@@ -315,9 +337,6 @@ class AgentRuntime:
                     value=task.title,
                 )
 
-                # -----------------------------------------
-                # Audit: task.completed
-                # -----------------------------------------
                 await log_audit(
                     db,
                     task_id=task.id,
