@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -7,6 +8,7 @@ from app.agent.llm import generate_plan
 from app.models.approval import Approval
 from app.models.task import Task
 from app.models.task_step import TaskStep
+from app.models.tool_call import ToolCall
 from app.services.audit import log_audit
 from app.services.memory import (
     filter_relevant_memories,
@@ -386,12 +388,14 @@ class AgentRuntime:
 
         context = context or {}
 
+        # -----------------------------------------
+        # Resolve the tool
+        # -----------------------------------------
         try:
             tool = self.registry.get(tool_name)
 
         except KeyError:
             step.status = "failed"
-
             step.output = {
                 "error": f"Tool '{tool_name}' is not registered."
             }
@@ -428,37 +432,80 @@ class AgentRuntime:
             elif "send" in operation_text:
                 mode = "send"
 
+        customers = context.get("customers", [])
+
+        # -----------------------------------------
+        # Create a ToolCall record for this invocation
+        # -----------------------------------------
+        tool_call: ToolCall | None = None
+
+        if db is not None:
+            existing_result = await db.execute(
+                select(ToolCall).where(
+                    ToolCall.task_step_id == step.id
+                )
+            )
+
+            existing_calls = existing_result.scalars().all()
+
+            call_number = len(existing_calls) + 1
+
+            tool_call = ToolCall(
+                task_step_id=step.id,
+                tool_name=tool_name,
+                call_number=call_number,
+                status="running",
+                input_data={
+                    "customers_count": len(customers),
+                    "mode": mode,
+                },
+                started_at=datetime.now(timezone.utc),
+            )
+
+            db.add(tool_call)
+            await db.flush()
+
+        # -----------------------------------------
+        # Execute the tool
+        # -----------------------------------------
         try:
-            # -----------------------------------------
-            # Pass mode only to Gmail
-            # -----------------------------------------
             if tool_name == "gmail":
                 result = await tool.execute(
-                    customers=context.get("customers", []),
+                    customers=customers,
                     mode=mode or "send",
                 )
             else:
-                result = await tool.execute(
-                    customers=context.get("customers", []),
+                result = await tool.execute(customers=customers)
+
+            # Treat {"success": False} as failure
+            if isinstance(result, dict) and result.get("success") is False:
+                raise RuntimeError(
+                    result.get("error")
+                    or result.get("message")
+                    or "Tool reported failure."
                 )
 
             step.status = "completed"
             step.output = result
 
-            # -----------------------------------------
-            # Audit: step.completed
-            # -----------------------------------------
+            if tool_call is not None:
+                tool_call.status = "success"
+                tool_call.output_data = result
+                tool_call.completed_at = datetime.now(timezone.utc)
+
             if db is not None:
                 await log_audit(
                     db,
                     task_id=step.task_id,
                     task_step_id=step.id,
+                    tool_call_id=(
+                        tool_call.id if tool_call is not None else None
+                    ),
                     event_type="step.completed",
                     actor_type="agent",
                     action=tool_name,
                     message=(
-                        f"Tool '{tool_name}' completed "
-                        f"successfully."
+                        f"Tool '{tool_name}' completed successfully."
                     ),
                     metadata={
                         "tool": tool_name,
@@ -469,27 +516,27 @@ class AgentRuntime:
             return result
 
         except Exception as exc:
-
             step.status = "failed"
+            step.output = {"error": str(exc)}
+            step.error = str(exc)
 
-            step.output = {
-                "error": str(exc),
-            }
+            if tool_call is not None:
+                tool_call.status = "failed"
+                tool_call.error = str(exc)
+                tool_call.completed_at = datetime.now(timezone.utc)
 
-            # -----------------------------------------
-            # Audit: step.failed
-            # -----------------------------------------
             if db is not None:
                 await log_audit(
                     db,
                     task_id=step.task_id,
                     task_step_id=step.id,
+                    tool_call_id=(
+                        tool_call.id if tool_call is not None else None
+                    ),
                     event_type="step.failed",
                     actor_type="agent",
                     action=tool_name,
-                    message=(
-                        f"Tool '{tool_name}' failed: {str(exc)}"
-                    ),
+                    message=f"Tool '{tool_name}' failed: {str(exc)}",
                     metadata={
                         "tool": tool_name,
                         "error": str(exc),
@@ -549,95 +596,25 @@ class AgentRuntime:
 
         tool_name = approval.action
 
+        operation = requested_data.get("step_name", "")
+
         step.status = "running"
         task.status = "running"
 
         await db.commit()
 
         # -----------------------------------------
-        # Determine operation mode (Gmail only)
+        # Execute the approved tool through the shared
+        # runtime path. This records ToolCall details
+        # and handles tool failures consistently.
         # -----------------------------------------
-        operation = requested_data.get("step_name", "")
-
-        mode = None
-
-        if tool_name == "gmail":
-            operation_text = operation.lower()
-
-            if "draft" in operation_text:
-                mode = "draft"
-            elif "send" in operation_text:
-                mode = "send"
-
-        # Execute approved tool
-        try:
-
-            tool = self.registry.get(tool_name)
-
-            # -----------------------------------------
-            # Pass mode only to Gmail
-            # -----------------------------------------
-            if tool_name == "gmail":
-                result = await tool.execute(
-                    customers=customers,
-                    mode=mode or "send",
-                )
-            else:
-                result = await tool.execute(
-                    customers=customers,
-                )
-
-            step.status = "completed"
-
-            step.output = result
-
-            # -----------------------------------------
-            # Audit: step.completed (post-approval)
-            # -----------------------------------------
-            await log_audit(
-                db,
-                task_id=task.id,
-                task_step_id=step.id,
-                event_type="step.completed",
-                actor_type="agent",
-                action=tool_name,
-                message=(
-                    f"Tool '{tool_name}' completed "
-                    f"after approval."
-                ),
-                metadata={
-                    "tool": tool_name,
-                    "mode": mode,
-                },
-            )
-
-        except Exception as exc:
-
-            step.status = "failed"
-
-            step.output = {
-                "error": str(exc)
-            }
-
-            # -----------------------------------------
-            # Audit: step.failed (post-approval)
-            # -----------------------------------------
-            await log_audit(
-                db,
-                task_id=task.id,
-                task_step_id=step.id,
-                event_type="step.failed",
-                actor_type="agent",
-                action=tool_name,
-                message=(
-                    f"Tool '{tool_name}' failed after "
-                    f"approval: {str(exc)}"
-                ),
-                metadata={
-                    "tool": tool_name,
-                    "error": str(exc),
-                },
-            )
+        await self._execute_step(
+            step=step,
+            tool_name=tool_name,
+            operation=operation,
+            context={"customers": customers},
+            db=db,
+        )
 
         # Check remaining approvals
         pending_result = await db.execute(
