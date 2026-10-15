@@ -1,19 +1,25 @@
 from uuid import UUID
 
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, get_db
+from app.config import settings
 from app.models.agent import Agent
 from app.models.organization import Organization
 from app.models.user import User
 from app.models.task import Task
 from app.models.task_step import TaskStep
 from app.models.audit_log import AuditLog
-from app.schemas.task import TaskCreate, TaskResponse
+from app.schemas.task import (
+    TaskCreate,
+    TaskResponse,
+    TaskStepResponse,
+)
 from app.schemas.audit import AuditLogResponse
-from app.agent.runtime import AgentRuntime
 
 
 router = APIRouter(
@@ -147,7 +153,10 @@ async def get_task(
     )
 
 
-@router.get("/{task_id}/steps")
+@router.get(
+    "/{task_id}/steps",
+    response_model=list[TaskStepResponse],
+)
 async def list_task_steps(
     task_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -204,27 +213,53 @@ async def run_task(
         user=user,
     )
 
-    if task.status == "running":
+    # "queued" is intentionally NOT rejected: if the previous
+    # enqueue attempt failed or the worker died, we want to
+    # allow re-enqueueing. The worker's atomic claim
+    # (queued -> running) prevents duplicate execution.
+    if task.status in {
+        "running",
+        "waiting_approval",
+        "completed",
+    }:
         raise HTTPException(
             status_code=409,
-            detail="Task is already running",
+            detail=f"Task cannot be queued while status is '{task.status}'.",
         )
 
-    runtime = AgentRuntime()
+    # Persist the queued state before sending the job.
+    previous_status = task.status
+    task.status = "queued"
+    await db.commit()
+    await db.refresh(task)
+
+    pool = None
 
     try:
-        task = await runtime.run(
-            task_id=task_id,
-            db=db,
+        pool = await create_pool(
+            RedisSettings.from_dsn(settings.redis_url)
         )
 
-        return task
+        await pool.enqueue_job(
+            "run_task",
+            str(task_id),
+            _job_id=f"task:{task_id}",
+        )
 
     except Exception as exc:
-        task.status = "failed"
+        # Revert status so the task can be retried.
+        task.status = previous_status
         await db.commit()
 
         raise HTTPException(
             status_code=500,
-            detail=f"Task execution failed: {str(exc)}",
+            detail=f"Failed to enqueue task: {str(exc)}",
         )
+
+    finally:
+        if pool is not None:
+            await pool.close()
+
+    await db.refresh(task)
+
+    return task

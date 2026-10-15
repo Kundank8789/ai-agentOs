@@ -33,6 +33,9 @@ type TaskStep = {
   action?: string;
   description?: string;
   status?: string;
+  input?: Record<string, unknown> | null;
+  output?: unknown;
+  error?: string | null;
   created_at?: string;
   updated_at?: string;
   [key: string]: unknown;
@@ -111,7 +114,11 @@ export default function TaskDetailsPage({ params }: PageProps) {
   useEffect(() => {
     if (!task) return;
 
-    if (task.status !== "running" && task.status !== "planned") {
+    if (
+      task.status !== "running" &&
+      task.status !== "planned" &&
+      task.status !== "queued"
+    ) {
       return;
     }
 
@@ -334,7 +341,9 @@ export default function TaskDetailsPage({ params }: PageProps) {
                           ? "w-3/4 bg-yellow-500"
                           : task.status === "running"
                             ? "w-1/2 animate-pulse bg-blue-500"
-                            : "w-1/4 bg-zinc-500"
+                            : task.status === "queued"
+                              ? "w-1/3 bg-purple-500"
+                              : "w-1/4 bg-zinc-500"
                   }`}
                 />
               </div>
@@ -493,6 +502,41 @@ function StepCard({
         {description && (
           <p className="mt-1 text-sm text-zinc-500">{description}</p>
         )}
+
+        {step.input && (
+          <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+              Input
+            </p>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-zinc-300">
+              {JSON.stringify(step.input, null, 2)}
+            </pre>
+          </div>
+        )}
+
+        {step.output !== undefined && step.output !== null && (
+          <div className="mt-3 rounded-lg border border-green-500/20 bg-green-500/5 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-green-400">
+              Execution Output
+            </p>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-zinc-300">
+              {typeof step.output === "string"
+                ? step.output
+                : JSON.stringify(step.output, null, 2)}
+            </pre>
+          </div>
+        )}
+
+        {step.error && (
+          <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-red-400">
+              Error
+            </p>
+            <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-red-300">
+              {step.error}
+            </pre>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -552,6 +596,7 @@ function StatusBadge({ status }: { status: string }) {
     running: "bg-blue-500/10 text-blue-400",
     pending: "bg-zinc-500/10 text-zinc-400",
     planned: "bg-purple-500/10 text-purple-400",
+    queued: "bg-purple-500/10 text-purple-400",
     waiting_approval: "bg-yellow-500/10 text-yellow-400",
     failed: "bg-red-500/10 text-red-400",
   };

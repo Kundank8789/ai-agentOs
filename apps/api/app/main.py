@@ -8,6 +8,7 @@ from app.api.agents import router as agents_router
 from app.api import memories
 from app.api import auth
 from app.api import audit
+from app.database import AsyncSessionLocal
 
 
 app = FastAPI(
