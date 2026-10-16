@@ -8,6 +8,7 @@ from app.api.agents import router as agents_router
 from app.api import memories
 from app.api import auth
 from app.api import audit
+from app.api.tools import router as tools_router          # ✅ correct tools import
 from app.database import AsyncSessionLocal
 
 
@@ -39,6 +40,8 @@ app.include_router(agents_router)
 app.include_router(memories.router)
 app.include_router(auth.router)
 app.include_router(audit.router)
+app.include_router(tools_router)                          # ✅ registered
+
 
 @app.get("/health")
 async def health():
@@ -53,7 +56,6 @@ async def health():
 async def database_health():
     async with AsyncSessionLocal() as session:
         result = await session.execute(text("SELECT 1"))
-
         return {
             "status": "ok",
             "database": result.scalar(),
