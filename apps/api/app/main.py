@@ -10,7 +10,7 @@ from app.api import auth
 from app.api import audit
 from app.api.tools import router as tools_router          # ✅ correct tools import
 from app.database import AsyncSessionLocal
-
+from app.api.tool_calls import router as tool_calls_router
 
 app = FastAPI(
     title="AgentOS API",
@@ -40,7 +40,8 @@ app.include_router(agents_router)
 app.include_router(memories.router)
 app.include_router(auth.router)
 app.include_router(audit.router)
-app.include_router(tools_router)                          # ✅ registered
+app.include_router(tools_router)         
+app.include_router(tool_calls_router)                 # ✅ registered
 
 
 @app.get("/health")

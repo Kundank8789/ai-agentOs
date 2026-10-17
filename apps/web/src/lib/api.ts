@@ -350,6 +350,7 @@ export async function createMemory(
 
   return response.json();
 }
+
 export type AuditLog = {
   id: string;
   task_id: string | null;
@@ -375,5 +376,55 @@ export async function getAuditLogs(): Promise<AuditLog[]> {
   return Array.isArray(data) ? data : [];
 }
 
+export type AgentTool = {
+  name: string;
+  description: string;
+  category: string;
+  approval_required: boolean;
+  integration_type: string;
+};
 
+export async function getTools(): Promise<AgentTool[]> {
+  const response = await apiFetch("/tools/");
 
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to fetch tools");
+  }
+
+  const data: AgentTool[] = await response.json();
+
+  return Array.isArray(data) ? data : [];
+}
+
+export type ToolCall = {
+  id: string;
+  task_step_id: string;
+  tool_name: string;
+  call_number: number;
+  status: string;
+  input_data: Record<string, unknown> | null;
+  output_data: Record<string, unknown> | null;
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export async function getTaskToolCalls(
+  taskId: string,
+): Promise<ToolCall[]> {
+  const response = await apiFetch(
+    `/tasks/${taskId}/tool-calls`,
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(
+      error?.detail || "Failed to fetch tool execution history",
+    );
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
+}

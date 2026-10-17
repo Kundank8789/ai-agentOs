@@ -7,9 +7,11 @@ import {
   getTask,
   getTaskSteps,
   getTaskAudit,
+  getTaskToolCalls,
   runTask,
   getAgent,
   type Agent,
+  type ToolCall,
 } from "@/lib/api";
 
 type Task = {
@@ -65,6 +67,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [steps, setSteps] = useState<TaskStep[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -75,15 +78,21 @@ export default function TaskDetailsPage({ params }: PageProps) {
     try {
       setError("");
 
-      const [taskData, stepsData, auditData] = await Promise.all([
-        getTask(id),
-        getTaskSteps(id),
-        getTaskAudit(id),
-      ]);
+      const [taskData, stepsData, auditData, toolCallsData] =
+        await Promise.all([
+          getTask(id),
+          getTaskSteps(id),
+          getTaskAudit(id),
+          getTaskToolCalls(id).catch((err) => {
+            console.error("Failed to load tool calls:", err);
+            return [];
+          }),
+        ]);
 
       setTask(taskData);
       setSteps(Array.isArray(stepsData) ? stepsData : []);
       setAuditLogs(Array.isArray(auditData) ? auditData : []);
+      setToolCalls(toolCallsData);
 
       // -----------------------------------------
       // Fetch the assigned agent (if any)
@@ -379,6 +388,89 @@ export default function TaskDetailsPage({ params }: PageProps) {
           </section>
         </div>
 
+        {/* Tool Execution History */}
+        <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">Tool Execution History</h2>
+              <p className="mt-1 text-sm text-zinc-500">
+                Tools called by the agent, with their inputs and outputs.
+              </p>
+            </div>
+            <span className="text-sm text-zinc-500">
+              {toolCalls.length} {toolCalls.length === 1 ? "call" : "calls"}
+            </span>
+          </div>
+
+          <div className="mt-6 space-y-3">
+            {toolCalls.length === 0 ? (
+              <EmptyState text="No tool calls recorded for this task yet." />
+            ) : (
+              toolCalls.map((call) => (
+                <div
+                  key={call.id}
+                  className="rounded-xl border border-white/10 bg-black/20 p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-medium text-zinc-200">
+                        {call.tool_name}
+                      </h3>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        Call #{call.call_number} · {formatDate(call.created_at)}
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs ${
+                        call.status === "success" || call.status === "completed"
+                          ? "bg-green-500/10 text-green-400"
+                          : call.status === "failed" || call.status === "error"
+                            ? "bg-red-500/10 text-red-400"
+                            : "bg-yellow-500/10 text-yellow-400"
+                      }`}
+                    >
+                      {prettyStatus(call.status)}
+                    </span>
+                  </div>
+
+                  {call.input_data != null && (
+                    <div className="mt-4 rounded-lg border border-white/10 p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                        Input
+                      </p>
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-zinc-300">
+                        {JSON.stringify(call.input_data, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+
+                  {call.output_data != null && (
+                    <div className="mt-3 rounded-lg border border-green-500/20 bg-green-500/5 p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-green-400">
+                        Output
+                      </p>
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs leading-5 text-zinc-300">
+                        {JSON.stringify(call.output_data, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+
+                  {call.error && (
+                    <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-red-400">
+                        Error
+                      </p>
+                      <pre className="overflow-x-auto whitespace-pre-wrap break-words text-xs text-red-300">
+                        {call.error}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
         {/* Audit Timeline */}
         <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
           <div>
@@ -673,7 +765,7 @@ function formatEvent(event: string) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function formatDate(value?: string) {
+function formatDate(value?: string | null) {
   if (!value) return "Unknown";
 
   const date = new Date(value);
