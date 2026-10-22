@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -21,6 +22,8 @@ from app.tools.crm import CRMTool
 from app.tools.web_search import WebSearchTool
 from app.tools.reasoning import ReasoningTool
 from app.tools.registry import ToolRegistry
+
+TOOL_TIMEOUT_SECONDS = 60
 
 
 class AgentRuntime:
@@ -51,6 +54,24 @@ class AgentRuntime:
 
         if task is None:
             raise ValueError("Task not found")
+
+        if task.status == "cancelled":
+            return task
+
+        if task.status == "cancellation_requested":
+            task.status = "cancelled"
+            await log_audit(
+                db,
+                task_id=task.id,
+                event_type="task.cancelled",
+                actor_type="system",
+                action="cancel_task",
+                message="Task cancelled before runtime execution began.",
+                metadata={"reason": "cancellation_requested"},
+            )
+            await db.commit()
+            await db.refresh(task)
+            return task
 
         task.status = "running"
         await db.commit()
@@ -130,6 +151,10 @@ class AgentRuntime:
             # 3. Execute planned steps
             # -----------------------------------------
             for step_data in plan.steps:
+                # CANCEL_BOUNDARY_CHECK_V1
+                await db.refresh(task, attribute_names=["status"])
+                if task.status in {"cancelled", "cancellation_requested"}:
+                    raise asyncio.CancelledError()
 
                 step = TaskStep(
                     task_id=task.id,
@@ -271,6 +296,10 @@ class AgentRuntime:
             # -----------------------------------------
             # 4. Determine task state
             # -----------------------------------------
+            await db.refresh(task, attribute_names=["status"])
+            if task.status in {"cancelled", "cancellation_requested"}:
+                raise asyncio.CancelledError()
+
             pending_result = await db.execute(
                 select(Approval).where(
                     Approval.task_id == task.id,
@@ -352,6 +381,23 @@ class AgentRuntime:
             await db.refresh(task)
 
             return task
+
+        except asyncio.CancelledError:
+            task.status = "cancelled"
+            try:
+                await log_audit(
+                    db,
+                    task_id=task.id,
+                    event_type="task.cancelled",
+                    actor_type="system",
+                    action="cancel_task",
+                    message="Task execution was cancelled.",
+                    metadata={"reason": "execution_cancelled"},
+                )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+            raise
 
         except Exception as exc:
             task.status = "failed"
@@ -466,16 +512,56 @@ class AgentRuntime:
             await db.flush()
 
         # -----------------------------------------
-        # Execute the tool
+        # Execute the tool with bounded safe retries
+        # SAFE_RETRY_PATCH_V1
         # -----------------------------------------
+        retry_safe_tools = {"google_sheets", "web_search", "reasoning"}
+        max_attempts = 3 if tool_name in retry_safe_tools else 1
+        transient_errors = (TimeoutError, ConnectionError, OSError)
+        attempts_used = 0
+
         try:
-            if tool_name == "gmail":
-                result = await tool.execute(
-                    customers=customers,
-                    mode=mode or "send",
-                )
-            else:
-                result = await tool.execute(customers=customers)
+            for attempt in range(1, max_attempts + 1):
+                attempts_used = attempt
+                try:
+                    if tool_name == "gmail":
+                        result = await asyncio.wait_for(
+                            tool.execute(
+                                customers=customers,
+                                mode=mode or "send",
+                            ),
+                            timeout=TOOL_TIMEOUT_SECONDS,
+                        )
+                    else:
+                        result = await asyncio.wait_for(
+                            tool.execute(customers=customers),
+                            timeout=TOOL_TIMEOUT_SECONDS,
+                        )
+                    break
+                except transient_errors as exc:
+                    if tool_name not in retry_safe_tools or attempt >= max_attempts:
+                        raise
+
+                    if db is not None:
+                        await log_audit(
+                            db,
+                            task_id=step.task_id,
+                            task_step_id=step.id,
+                            tool_call_id=tool_call.id if tool_call is not None else None,
+                            event_type="tool.retry",
+                            actor_type="agent",
+                            action=tool_name,
+                            message=f"Transient failure on attempt {attempt}/{max_attempts}; retrying: {exc}",
+                            metadata={
+                                "tool": tool_name,
+                                "attempt": attempt,
+                                "next_attempt": attempt + 1,
+                                "max_attempts": max_attempts,
+                                "error": str(exc),
+                            },
+                        )
+
+                    await asyncio.sleep(0.25 * attempt)
 
             # Treat {"success": False} as failure
             if isinstance(result, dict) and result.get("success") is False:

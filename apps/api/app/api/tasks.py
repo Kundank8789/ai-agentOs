@@ -3,10 +3,11 @@ from uuid import UUID
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, get_db
+from app.services.audit import log_audit
 from app.config import settings
 from app.models.agent import Agent
 from app.models.organization import Organization
@@ -262,4 +263,67 @@ async def run_task(
 
     await db.refresh(task)
 
+    return task
+
+# CANCEL_TASK_ENDPOINT_V1
+@router.post("/{task_id}/cancel", response_model=TaskResponse)
+async def cancel_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Cancel a task or request cancellation at the next safe boundary."""
+    task = await get_task_for_user(db=db, task_id=task_id, user=user)
+
+    if task.status == "cancellation_requested":
+        return task
+
+    if task.status in {"completed", "failed", "cancelled"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task cannot be cancelled while status is '{task.status}'.",
+        )
+
+    current_status = task.status
+    if current_status == "running":
+        new_status = "cancellation_requested"
+        event_type = "task.cancellation_requested"
+        message = "Cancellation requested; waiting for a safe execution boundary."
+    elif current_status in {"pending", "queued", "waiting_approval"}:
+        new_status = "cancelled"
+        event_type = "task.cancelled"
+        message = "Task cancelled before execution could continue."
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Task cannot be cancelled while status is '{current_status}'.",
+        )
+
+    # Compare-and-set prevents racing the worker's queued -> running claim.
+    changed = await db.execute(
+        update(Task)
+        .where(Task.id == task.id, Task.status == current_status)
+        .values(status=new_status)
+    )
+
+    if changed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Task status changed concurrently. Refresh and try again.",
+        )
+
+    task.status = new_status
+
+    await log_audit(
+        db,
+        task_id=task.id,
+        event_type=event_type,
+        actor_type="user",
+        action="cancel_task",
+        message=message,
+        metadata={"previous_status": current_status, "new_status": new_status},
+    )
+    await db.commit()
+    await db.refresh(task)
     return task

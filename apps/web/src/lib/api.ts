@@ -427,4 +427,22 @@ export async function getTaskToolCalls(
 
   const data = await response.json();
   return Array.isArray(data) ? data : [];
+
 }
+
+
+export async function cancelTask(taskId: string) {
+  const response = await apiFetch(`/tasks/${taskId}/cancel`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(
+      error?.detail || "Failed to cancel task",
+    );
+  }
+
+  return response.json();
+}
+

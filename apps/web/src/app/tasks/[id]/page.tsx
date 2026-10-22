@@ -9,6 +9,7 @@ import {
   getTaskAudit,
   getTaskToolCalls,
   runTask,
+  cancelTask,
   getAgent,
   type Agent,
   type ToolCall,
@@ -72,6 +73,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState("");
 
   const loadTaskData = useCallback(async () => {
@@ -94,9 +96,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
       setAuditLogs(Array.isArray(auditData) ? auditData : []);
       setToolCalls(toolCallsData);
 
-      // -----------------------------------------
-      // Fetch the assigned agent (if any)
-      // -----------------------------------------
       if (taskData.agent_id) {
         try {
           const agentData = await getAgent(taskData.agent_id);
@@ -119,7 +118,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
     loadTaskData();
   }, [loadTaskData]);
 
-  // Automatically refresh while the runtime is executing.
   useEffect(() => {
     if (!task) return;
 
@@ -167,6 +165,31 @@ export default function TaskDetailsPage({ params }: PageProps) {
     }
   }
 
+  async function handleCancelTask() {
+    if (!window.confirm("Are you sure you want to cancel this task?")) {
+      return;
+    }
+
+    try {
+      setCancelling(true);
+      setError("");
+
+      const updatedTask = await cancelTask(id);
+      setTask(updatedTask);
+
+      await loadTaskData();
+    } catch (err) {
+      console.error(err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to cancel task.",
+      );
+    } finally {
+      setCancelling(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-[#09090b] p-6 text-white md:p-10">
@@ -197,11 +220,13 @@ export default function TaskDetailsPage({ params }: PageProps) {
   }
 
   const needsApproval = task.status === "waiting_approval";
+  const isTerminal = ["completed", "failed", "cancelled"].includes(
+    task.status,
+  );
 
   return (
     <main className="min-h-screen bg-[#09090b] p-6 text-white md:p-10">
       <div className="mx-auto max-w-6xl">
-        {/* Back */}
         <Link
           href="/tasks"
           className="text-sm text-zinc-500 transition hover:text-zinc-300"
@@ -209,7 +234,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
           ← Back to tasks
         </Link>
 
-        {/* Header */}
         <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.02] p-6 md:p-8">
           <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
             <div className="max-w-3xl">
@@ -242,6 +266,14 @@ export default function TaskDetailsPage({ params }: PageProps) {
               </button>
 
               <button
+                onClick={handleCancelTask}
+                disabled={cancelling || isTerminal}
+                className="rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-2.5 text-sm font-medium text-red-400 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {cancelling ? "Cancelling..." : "Cancel Task"}
+              </button>
+
+              <button
                 onClick={handleRunTask}
                 disabled={running || task.status === "running"}
                 className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -260,7 +292,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
           )}
         </section>
 
-        {/* Approval banner */}
         {needsApproval && (
           <section className="mt-6 rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -285,9 +316,7 @@ export default function TaskDetailsPage({ params }: PageProps) {
           </section>
         )}
 
-        {/* Main grid */}
         <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-          {/* Execution Steps */}
           <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
             <div className="flex items-center justify-between">
               <div>
@@ -326,7 +355,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
             </div>
           </section>
 
-          {/* Current Status */}
           <section className="rounded-2xl border border-white/10 bg-white/[0.02] p-6">
             <h2 className="text-lg font-semibold">Current Status</h2>
 
@@ -346,13 +374,15 @@ export default function TaskDetailsPage({ params }: PageProps) {
                       ? "w-full bg-green-500"
                       : task.status === "failed"
                         ? "w-full bg-red-500"
-                        : task.status === "waiting_approval"
-                          ? "w-3/4 bg-yellow-500"
-                          : task.status === "running"
-                            ? "w-1/2 animate-pulse bg-blue-500"
-                            : task.status === "queued"
-                              ? "w-1/3 bg-purple-500"
-                              : "w-1/4 bg-zinc-500"
+                        : task.status === "cancelled"
+                          ? "w-full bg-zinc-500"
+                          : task.status === "waiting_approval"
+                            ? "w-3/4 bg-yellow-500"
+                            : task.status === "running"
+                              ? "w-1/2 animate-pulse bg-blue-500"
+                              : task.status === "queued"
+                                ? "w-1/3 bg-purple-500"
+                                : "w-1/4 bg-zinc-500"
                   }`}
                 />
               </div>
@@ -363,7 +393,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
               <InfoRow label="Created" value={formatDate(task.created_at)} />
               <InfoRow label="Updated" value={formatDate(task.updated_at)} />
 
-              {/* Agent info */}
               <div className="rounded-xl border border-white/10 bg-black/20 p-4">
                 <p className="text-[10px] uppercase tracking-wider text-zinc-600">
                   Agent
@@ -388,7 +417,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
           </section>
         </div>
 
-        {/* Tool Execution History */}
         <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -471,7 +499,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
           </div>
         </section>
 
-        {/* Audit Timeline */}
         <section className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
           <div>
             <h2 className="text-lg font-semibold">Audit Timeline</h2>
@@ -498,7 +525,6 @@ export default function TaskDetailsPage({ params }: PageProps) {
           </div>
         </section>
 
-        {/* Metadata */}
         <section className="mt-6 grid gap-4 md:grid-cols-2">
           <MetadataCard
             title="Organization"
@@ -691,6 +717,7 @@ function StatusBadge({ status }: { status: string }) {
     queued: "bg-purple-500/10 text-purple-400",
     waiting_approval: "bg-yellow-500/10 text-yellow-400",
     failed: "bg-red-500/10 text-red-400",
+    cancelled: "bg-zinc-500/10 text-zinc-400",
   };
 
   return (

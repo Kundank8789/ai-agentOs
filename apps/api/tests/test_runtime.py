@@ -213,3 +213,243 @@ async def test_execute_step_records_raised_tool_exception(monkeypatch):
     assert db.tool_calls[0].status == "failed"
     assert db.tool_calls[0].error == "Connection timed out"
     assert audit_events[0]["event_type"] == "step.failed"
+
+
+class RetryFakeRegistry:
+    def __init__(self, tool):
+        self.tool = tool
+
+    def get(self, name):
+        return self.tool
+
+
+class SequenceTool:
+    def __init__(self, errors, result=None):
+        self.errors = list(errors)
+        self.result = result or {"success": True}
+        self.calls = 0
+
+    async def execute(self, **kwargs):
+        self.calls += 1
+        if self.errors:
+            error = self.errors.pop(0)
+            raise error
+        return self.result
+
+
+@pytest.mark.asyncio
+async def test_safe_retry_recovers_after_transient_error(monkeypatch):
+    db = FakeDB()
+    step = make_step()
+    expected = {"success": True, "message": "Recovered"}
+    tool = SequenceTool([ConnectionError("temporary network failure")], expected)
+
+    runtime = AgentRuntime()
+    runtime.registry = RetryFakeRegistry(tool)
+
+    events = []
+
+    async def fake_log_audit(db_arg, **kwargs):
+        events.append(kwargs)
+
+    async def fake_sleep(seconds):
+        pass
+
+    monkeypatch.setattr("app.agent.runtime.log_audit", fake_log_audit)
+    monkeypatch.setattr("app.agent.runtime.asyncio.sleep", fake_sleep)
+
+    result = await runtime._execute_step(
+        step=step,
+        tool_name="web_search",
+        context={},
+        db=db,
+    )
+
+    assert result == expected
+    assert step.status == "completed"
+    assert tool.calls == 2
+    assert any(e["event_type"] == "tool.retry" for e in events)
+    assert any(e["event_type"] == "step.completed" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_safe_retry_stops_after_three_attempts(monkeypatch):
+    db = FakeDB()
+    step = make_step()
+    tool = SequenceTool([
+        TimeoutError("timeout 1"),
+        ConnectionError("connection 2"),
+        OSError("network 3"),
+    ])
+
+    runtime = AgentRuntime()
+    runtime.registry = RetryFakeRegistry(tool)
+
+    events = []
+
+    async def fake_log_audit(db_arg, **kwargs):
+        events.append(kwargs)
+
+    async def fake_sleep(seconds):
+        pass
+
+    monkeypatch.setattr("app.agent.runtime.log_audit", fake_log_audit)
+    monkeypatch.setattr("app.agent.runtime.asyncio.sleep", fake_sleep)
+
+    result = await runtime._execute_step(
+        step=step,
+        tool_name="web_search",
+        context={},
+        db=db,
+    )
+
+    assert step.status == "failed"
+    assert tool.calls == 3
+    assert "network 3" in result["error"]
+    assert sum(e["event_type"] == "tool.retry" for e in events) == 2
+    assert any(e["event_type"] == "step.failed" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_gmail_is_not_retried_on_transient_error(monkeypatch):
+    db = FakeDB()
+    step = make_step()
+    tool = SequenceTool([ConnectionError("temporary mail failure")])
+
+    runtime = AgentRuntime()
+    runtime.registry = RetryFakeRegistry(tool)
+
+    events = []
+
+    async def fake_log_audit(db_arg, **kwargs):
+        events.append(kwargs)
+
+    monkeypatch.setattr("app.agent.runtime.log_audit", fake_log_audit)
+
+    result = await runtime._execute_step(
+        step=step,
+        tool_name="gmail",
+        context={},
+        db=db,
+    )
+
+    assert step.status == "failed"
+    assert tool.calls == 1
+    assert "temporary mail failure" in result["error"]
+    assert not any(e["event_type"] == "tool.retry" for e in events)
+
+
+class SlowTool:
+    def __init__(self):
+        self.calls = 0
+
+    async def execute(self, **kwargs):
+        import asyncio
+        self.calls += 1
+        await asyncio.sleep(2)
+        return {"success": True}
+
+
+@pytest.mark.asyncio
+async def test_tool_timeout_marks_step_failed(monkeypatch):
+    import app.agent.runtime as runtime_module
+
+    db = FakeDB()
+    step = make_step()
+    tool = SlowTool()
+
+    runtime = AgentRuntime()
+    runtime.registry = RetryFakeRegistry(tool)
+
+    audit_events = []
+
+    async def fake_log_audit(db_arg, **kwargs):
+        audit_events.append(kwargs)
+
+    monkeypatch.setattr(runtime_module, "TOOL_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(runtime_module, "log_audit", fake_log_audit)
+
+    result = await runtime._execute_step(
+        step=step,
+        tool_name="gmail",
+        operation="send email",
+        context={},
+        db=db,
+    )
+
+    assert step.status == "failed"
+    assert tool.calls == 1
+    assert result == {"error": ""}
+    assert db.tool_calls[0].status == "failed"
+    assert any(e["event_type"] == "step.failed" for e in audit_events)
+
+
+@pytest.mark.asyncio
+async def test_runtime_cancellation_request_at_final_boundary(monkeypatch):
+    import asyncio
+
+    import app.agent.runtime as runtime_module
+
+    task = SimpleNamespace(
+        id=uuid4(),
+        status="running",
+        title="Cancellation boundary test",
+        description="Test cancellation safely",
+        organization_id=uuid4(),
+        user_id=uuid4(),
+        agent_id=uuid4(),
+    )
+
+    class ResultWithTask(FakeResult):
+        def scalar_one_or_none(self):
+            return task
+
+    class CancellationDB(FakeDB):
+        def __init__(self):
+            super().__init__()
+            self.status_refreshes = 0
+
+        async def execute(self, statement):
+            self.statements.append(statement)
+            return ResultWithTask([])
+
+        async def refresh(self, instance, attribute_names=None):
+            if attribute_names == ["status"]:
+                self.status_refreshes += 1
+                # Simulate the API recording cancellation in the database
+                # just before the runtime's final status decision.
+                instance.status = "cancellation_requested"
+
+    db = CancellationDB()
+    events = []
+
+    async def fake_log_audit(db_arg, **kwargs):
+        events.append(kwargs)
+
+    async def fake_get_memories(**kwargs):
+        return []
+
+    async def fake_generate_plan(**kwargs):
+        return SimpleNamespace(goal="test", steps=[])
+
+    async def fake_save_task_memory(**kwargs):
+        pass
+
+    monkeypatch.setattr(runtime_module, "log_audit", fake_log_audit)
+    monkeypatch.setattr(runtime_module, "get_memories", fake_get_memories)
+    monkeypatch.setattr(runtime_module, "generate_plan", fake_generate_plan)
+    monkeypatch.setattr(
+        runtime_module, "save_task_memory", fake_save_task_memory
+    )
+
+    runtime = AgentRuntime()
+
+    with pytest.raises(asyncio.CancelledError):
+        await runtime.run(task_id=task.id, db=db)
+
+    assert task.status == "cancelled"
+    assert db.status_refreshes >= 1
+    assert any(
+        event["event_type"] == "task.cancelled"
+        for event in events
+    )
