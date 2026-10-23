@@ -453,3 +453,98 @@ async def test_runtime_cancellation_request_at_final_boundary(monkeypatch):
         event["event_type"] == "task.cancelled"
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_cancellation_requested_while_tool_is_running(monkeypatch):
+    import asyncio
+
+    import app.agent.runtime as runtime_module
+
+    task = SimpleNamespace(
+        id=uuid4(),
+        status="running",
+        title="Mid-execution cancellation test",
+        description="Test cancellation during tool execution",
+        organization_id=uuid4(),
+        user_id=uuid4(),
+        agent_id=uuid4(),
+    )
+
+    step_data = SimpleNamespace(
+        step_number=1,
+        name="Run test tool",
+        description="Simulated slow tool",
+        tool="test_tool",
+        requires_approval=False,
+    )
+
+    class TaskResult(FakeResult):
+        def scalar_one_or_none(self):
+            return task
+
+    class RunningCancellationDB(FakeDB):
+        def __init__(self):
+            super().__init__()
+            self.status_refreshes = 0
+
+        async def execute(self, statement):
+            self.statements.append(statement)
+            # The first query loads the task. Later queries return
+            # an empty result for existing tool calls and task steps.
+            return TaskResult([])
+
+        async def refresh(self, instance, attribute_names=None):
+            if attribute_names == ["status"]:
+                self.status_refreshes += 1
+                if self.status_refreshes >= 2:
+                    instance.status = "cancellation_requested"
+
+    tool_started = asyncio.Event()
+    allow_tool_to_finish = asyncio.Event()
+    audit_events = []
+
+    class WaitingTool:
+        async def execute(self, **kwargs):
+            tool_started.set()
+            await allow_tool_to_finish.wait()
+            return {"success": True, "message": "Tool finished"}
+
+    async def fake_log_audit(db_arg, **kwargs):
+        audit_events.append(kwargs)
+
+    async def fake_get_memories(**kwargs):
+        return []
+
+    async def fake_generate_plan(**kwargs):
+        return SimpleNamespace(goal="test", steps=[step_data])
+
+    async def fake_save_task_memory(**kwargs):
+        pass
+
+    monkeypatch.setattr(runtime_module, "log_audit", fake_log_audit)
+    monkeypatch.setattr(runtime_module, "get_memories", fake_get_memories)
+    monkeypatch.setattr(runtime_module, "generate_plan", fake_generate_plan)
+    monkeypatch.setattr(runtime_module, "save_task_memory", fake_save_task_memory)
+
+    db = RunningCancellationDB()
+    runtime = AgentRuntime()
+    runtime.registry = FakeRegistry(WaitingTool())
+
+    run_task = asyncio.create_task(runtime.run(task_id=task.id, db=db))
+
+    try:
+        await asyncio.wait_for(tool_started.wait(), timeout=2)
+        # Simulate the API requesting cancellation while the tool is running.
+        task.status = "cancellation_requested"
+    finally:
+        allow_tool_to_finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(run_task, timeout=3)
+
+    assert task.status == "cancelled"
+    assert any(
+        event["event_type"] == "task.cancelled"
+        for event in audit_events
+    )
