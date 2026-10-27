@@ -1,8 +1,10 @@
+import asyncio
 from uuid import UUID
 
 from arq.connections import RedisSettings
 from sqlalchemy import update
 
+from app.agent.exceptions import TaskCancellationRequested
 from app.agent.runtime import AgentRuntime
 from app.config import settings
 from app.database import AsyncSessionLocal
@@ -36,10 +38,16 @@ async def run_task(ctx: dict, task_id: str) -> dict:
             }
 
         # AgentRuntime.run manages the execution and final task status.
-        result = await AgentRuntime().run(
-            task_id=parsed_task_id,
-            db=db,
-        )
+        try:
+            result = await AgentRuntime().run(
+                task_id=parsed_task_id,
+                db=db,
+            )
+        except TaskCancellationRequested:
+            return {
+                "status": "cancelled",
+                "task_id": task_id,
+            }
 
         return {
             "status": result.status,

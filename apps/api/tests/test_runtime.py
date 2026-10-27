@@ -1,9 +1,9 @@
-
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
+from app.agent.exceptions import TaskCancellationRequested
 from app.agent.runtime import AgentRuntime
 from app.models.tool_call import ToolCall
 
@@ -444,7 +444,7 @@ async def test_runtime_cancellation_request_at_final_boundary(monkeypatch):
 
     runtime = AgentRuntime()
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(TaskCancellationRequested):
         await runtime.run(task_id=task.id, db=db)
 
     assert task.status == "cancelled"
@@ -540,7 +540,7 @@ async def test_runtime_cancellation_requested_while_tool_is_running(monkeypatch)
     finally:
         allow_tool_to_finish.set()
 
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(TaskCancellationRequested):
         await asyncio.wait_for(run_task, timeout=3)
 
     assert task.status == "cancelled"

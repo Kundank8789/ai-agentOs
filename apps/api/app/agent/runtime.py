@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.agent.exceptions import TaskCancellationRequested
 
 from app.agent.llm import generate_plan
 from app.models.approval import Approval
@@ -154,7 +155,7 @@ class AgentRuntime:
                 # CANCEL_BOUNDARY_CHECK_V1
                 await db.refresh(task, attribute_names=["status"])
                 if task.status in {"cancelled", "cancellation_requested"}:
-                    raise asyncio.CancelledError()
+                    raise TaskCancellationRequested()
 
                 step = TaskStep(
                     task_id=task.id,
@@ -298,7 +299,7 @@ class AgentRuntime:
             # -----------------------------------------
             await db.refresh(task, attribute_names=["status"])
             if task.status in {"cancelled", "cancellation_requested"}:
-                raise asyncio.CancelledError()
+                raise TaskCancellationRequested()
 
             pending_result = await db.execute(
                 select(Approval).where(
@@ -382,7 +383,7 @@ class AgentRuntime:
 
             return task
 
-        except asyncio.CancelledError:
+        except (TaskCancellationRequested, asyncio.CancelledError):
             task.status = "cancelled"
             try:
                 await log_audit(
