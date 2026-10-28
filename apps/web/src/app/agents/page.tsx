@@ -61,10 +61,14 @@ export default function AgentsPage() {
       setCreating(true);
       setError("");
 
-      await createAgent(
-        agentName.trim(),
-        agentDescription.trim(),
-      );
+
+      await createAgent({
+        name: agentName.trim(),
+        description: agentDescription.trim() || null,
+        instructions: "",
+        tool_config: {},
+      });
+
 
       setAgentName("");
       setAgentDescription("");
@@ -321,15 +325,13 @@ function AgentCard({ agent }: { agent: Agent }) {
 
             <div className="mt-1 flex items-center gap-2">
               <span
-                className={`h-2 w-2 rounded-full ${
-                  active ? "bg-green-400" : "bg-zinc-600"
-                }`}
+                className={`h-2 w-2 rounded-full ${active ? "bg-green-400" : "bg-zinc-600"
+                  }`}
               />
 
               <span
-                className={`text-xs capitalize ${
-                  active ? "text-green-400" : "text-zinc-500"
-                }`}
+                className={`text-xs capitalize ${active ? "text-green-400" : "text-zinc-500"
+                  }`}
               >
                 {agent.status}
               </span>

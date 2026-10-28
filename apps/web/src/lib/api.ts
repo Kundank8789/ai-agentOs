@@ -252,12 +252,25 @@ export async function rejectApproval(
 
 export type Agent = {
   id: string;
-  organization_id: string;
+  organization_id?: string;
   name: string;
   description?: string | null;
+  instructions?: string | null;
+  tool_config: Record<string, boolean>;
   status: string;
   created_at: string;
   updated_at?: string | null;
+};
+
+export type AgentInput = {
+  name: string;
+  description?: string | null;
+  instructions?: string | null;
+  tool_config?: Record<string, boolean>;
+};
+
+export type AgentUpdate = Partial<AgentInput> & {
+  status?: "active" | "inactive";
 };
 
 export async function getAgents(): Promise<Agent[]> {
@@ -269,19 +282,19 @@ export async function getAgents(): Promise<Agent[]> {
   }
 
   const data = await response.json();
-
   return Array.isArray(data) ? data : [];
 }
 
 export async function createAgent(
-  name: string,
-  description: string,
+  input: AgentInput,
 ): Promise<Agent> {
   const response = await apiFetch("/agents/", {
     method: "POST",
     body: JSON.stringify({
-      name,
-      description,
+      name: input.name,
+      description: input.description ?? null,
+      instructions: input.instructions ?? null,
+      tool_config: input.tool_config ?? {},
     }),
   });
 
@@ -299,6 +312,23 @@ export async function getAgent(agentId: string): Promise<Agent> {
   if (!response.ok) {
     const error = await response.json().catch(() => null);
     throw new Error(error?.detail || "Failed to fetch agent");
+  }
+
+  return response.json();
+}
+
+export async function updateAgent(
+  agentId: string,
+  input: AgentUpdate,
+): Promise<Agent> {
+  const response = await apiFetch(`/agents/${agentId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to update agent");
   }
 
   return response.json();
@@ -427,9 +457,7 @@ export async function getTaskToolCalls(
 
   const data = await response.json();
   return Array.isArray(data) ? data : [];
-
 }
-
 
 export async function cancelTask(taskId: string) {
   const response = await apiFetch(`/tasks/${taskId}/cancel`, {
@@ -445,4 +473,3 @@ export async function cancelTask(taskId: string) {
 
   return response.json();
 }
-

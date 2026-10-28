@@ -1,0 +1,11 @@
+* [33mbca2eea[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m)[m feat: add task cancellation flow and tests
+[31m|[m * [33mef33266[m[33m ([m[1;31morigin/main[m[33m)[m Create README.md
+[31m|[m[31m/[m  
+* [33mbe80416[m fix my frontend file
+* [33md831d25[m i can tested my backend routes and api all ok
+* [33mabd7c20[m make some change
+* [33ma859b7f[m test: verify tool call tracking and failures
+* [33md87e2b8[m add some test case
+* [33m30de750[m fix: prevent task completion when steps fail
+* [33m24d9706[m test: expand organization isolation checks
+* [33m719c1f7[m test: verify API authentication and audit isolation

@@ -121,11 +121,14 @@ export default function TaskDetailsPage({ params }: PageProps) {
   useEffect(() => {
     if (!task) return;
 
-    if (
-      task.status !== "running" &&
-      task.status !== "planned" &&
-      task.status !== "queued"
-    ) {
+    const activeStatuses = [
+      "running",
+      "planned",
+      "queued",
+      "cancellation_requested",
+    ];
+
+    if (!activeStatuses.includes(task.status)) {
       return;
     }
 
@@ -267,10 +270,18 @@ export default function TaskDetailsPage({ params }: PageProps) {
 
               <button
                 onClick={handleCancelTask}
-                disabled={cancelling || isTerminal}
+                disabled={
+                  cancelling ||
+                  isTerminal ||
+                  task.status === "cancellation_requested"
+                }
                 className="rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-2.5 text-sm font-medium text-red-400 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {cancelling ? "Cancelling..." : "Cancel Task"}
+                {cancelling
+                  ? "Cancelling..."
+                  : task.status === "cancellation_requested"
+                    ? "Cancellation Requested"
+                    : "Cancel Task"}
               </button>
 
               <button
@@ -376,13 +387,15 @@ export default function TaskDetailsPage({ params }: PageProps) {
                         ? "w-full bg-red-500"
                         : task.status === "cancelled"
                           ? "w-full bg-zinc-500"
-                          : task.status === "waiting_approval"
-                            ? "w-3/4 bg-yellow-500"
-                            : task.status === "running"
-                              ? "w-1/2 animate-pulse bg-blue-500"
-                              : task.status === "queued"
-                                ? "w-1/3 bg-purple-500"
-                                : "w-1/4 bg-zinc-500"
+                          : task.status === "cancellation_requested"
+                            ? "w-4/5 bg-orange-500"
+                            : task.status === "waiting_approval"
+                              ? "w-3/4 bg-yellow-500"
+                              : task.status === "running"
+                                ? "w-1/2 animate-pulse bg-blue-500"
+                                : task.status === "queued"
+                                  ? "w-1/3 bg-purple-500"
+                                  : "w-1/4 bg-zinc-500"
                   }`}
                 />
               </div>
@@ -718,6 +731,7 @@ function StatusBadge({ status }: { status: string }) {
     waiting_approval: "bg-yellow-500/10 text-yellow-400",
     failed: "bg-red-500/10 text-red-400",
     cancelled: "bg-zinc-500/10 text-zinc-400",
+    cancellation_requested: "bg-orange-500/10 text-orange-400",
   };
 
   return (
@@ -726,7 +740,9 @@ function StatusBadge({ status }: { status: string }) {
         styles[status] ?? "bg-white/5 text-zinc-400"
       }`}
     >
-      {prettyStatus(status)}
+      {status === "cancellation_requested"
+        ? "Cancellation Requested"
+        : prettyStatus(status)}
     </span>
   );
 }
