@@ -6,7 +6,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   createAgent,
   getAgents,
+  getTools,
   type Agent,
+  type AgentTool,
 } from "@/lib/api";
 
 const capabilities = [
@@ -25,6 +27,11 @@ export default function AgentsPage() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
+  const [agentInstructions, setAgentInstructions] = useState("");
+  const [availableTools, setAvailableTools] = useState<AgentTool[]>([]);
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(
+    new Set(),
+  );
   const [creating, setCreating] = useState(false);
 
   async function loadAgents() {
@@ -47,6 +54,20 @@ export default function AgentsPage() {
     }
   }
 
+  async function loadAvailableTools() {
+    try {
+      const tools = await getTools();
+      setAvailableTools(tools);
+    } catch (error) {
+      console.error("Tools fetch error:", error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to load available tools",
+      );
+    }
+  }
+
   async function handleCreateAgent(
     event: FormEvent<HTMLFormElement>,
   ) {
@@ -61,17 +82,22 @@ export default function AgentsPage() {
       setCreating(true);
       setError("");
 
-
       await createAgent({
         name: agentName.trim(),
         description: agentDescription.trim() || null,
-        instructions: "",
-        tool_config: {},
+        instructions: agentInstructions.trim() || null,
+        tool_config: Object.fromEntries(
+          availableTools.map((tool) => [
+            tool.name,
+            selectedTools.has(tool.name),
+          ]),
+        ),
       });
-
 
       setAgentName("");
       setAgentDescription("");
+      setAgentInstructions("");
+      setSelectedTools(new Set());
       setShowCreateForm(false);
 
       await loadAgents();
@@ -90,6 +116,7 @@ export default function AgentsPage() {
 
   useEffect(() => {
     loadAgents();
+    loadAvailableTools();
   }, []);
 
   const activeAgents = useMemo(
@@ -204,6 +231,76 @@ export default function AgentsPage() {
                   rows={4}
                   className="w-full resize-none rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-blue-500/50"
                 />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-zinc-300">
+                  Agent Instructions
+                </label>
+                <textarea
+                  value={agentInstructions}
+                  onChange={(event) => setAgentInstructions(event.target.value)}
+                  placeholder="You are an operations assistant. Follow company policies, use only enabled tools, and ask for approval before sensitive actions."
+                  rows={5}
+                  className="w-full resize-y rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-blue-500/50"
+                />
+                <p className="mt-2 text-xs text-zinc-500">
+                  Define the agent's role, behavior, and operating rules.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-3 block text-sm font-medium text-zinc-300">
+                  Available Tools
+                </label>
+
+                {availableTools.length === 0 ? (
+                  <p className="text-sm text-zinc-500">
+                    Loading tools or no tools are available.
+                  </p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {availableTools.map((tool) => (
+                      <label
+                        key={tool.name}
+                        className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-black/20 p-4 transition hover:border-blue-500/40"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedTools.has(tool.name)}
+                          onChange={(event) => {
+                            setSelectedTools((previous) => {
+                              const next = new Set(previous);
+
+                              if (event.target.checked) {
+                                next.add(tool.name);
+                              } else {
+                                next.delete(tool.name);
+                              }
+
+                              return next;
+                            });
+                          }}
+                          className="mt-1 accent-blue-500"
+                        />
+
+                        <span>
+                          <span className="block text-sm font-medium text-white">
+                            {tool.name.replaceAll("_", " ")}
+                          </span>
+                          <span className="mt-1 block text-xs text-zinc-400">
+                            {tool.description}
+                          </span>
+                          <span className="mt-2 block text-xs text-zinc-500">
+                            {tool.approval_required
+                              ? "Human approval required"
+                              : "No approval required by tool metadata"}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-3">
@@ -325,13 +422,15 @@ function AgentCard({ agent }: { agent: Agent }) {
 
             <div className="mt-1 flex items-center gap-2">
               <span
-                className={`h-2 w-2 rounded-full ${active ? "bg-green-400" : "bg-zinc-600"
-                  }`}
+                className={`h-2 w-2 rounded-full ${
+                  active ? "bg-green-400" : "bg-zinc-600"
+                }`}
               />
 
               <span
-                className={`text-xs capitalize ${active ? "text-green-400" : "text-zinc-500"
-                  }`}
+                className={`text-xs capitalize ${
+                  active ? "text-green-400" : "text-zinc-500"
+                }`}
               >
                 {agent.status}
               </span>

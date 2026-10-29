@@ -8,22 +8,27 @@ import { getAgent, type Agent } from "@/lib/api";
 
 const tools = [
   {
+    key: "google_sheets",
     name: "Google Sheets",
     description: "Read and process business data.",
   },
   {
+    key: "gmail",
     name: "Gmail",
     description: "Prepare and send customer communications.",
   },
   {
+    key: "crm",
     name: "CRM",
     description: "Update customer and business records.",
   },
   {
+    key: "web_search",
     name: "Web Search",
     description: "Research external information.",
   },
   {
+    key: "reasoning",
     name: "Reasoning",
     description: "Analyze data and make execution decisions.",
   },
@@ -182,6 +187,15 @@ export default function AgentDetailPage() {
           />
         </section>
 
+        {agent.instructions && (
+          <section className="mt-6 rounded-xl border border-white/10 bg-white/[0.02] p-5">
+            <h2 className="text-lg font-medium">Agent Instructions</h2>
+            <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-zinc-400">
+              {agent.instructions}
+            </p>
+          </section>
+        )}
+
         <section className="mt-8">
           <div className="mb-4">
             <h2 className="text-xl font-medium">
@@ -194,31 +208,41 @@ export default function AgentDetailPage() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            {tools.map((tool) => (
-              <div
-                key={tool.name}
-                className="rounded-xl border border-white/10 bg-white/[0.02] p-5"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
-                    ✦
-                  </span>
+            {tools.map((tool) => {
+              const enabled = agent.tool_config?.[tool.key] === true;
 
-                  <h3 className="font-medium">
-                    {tool.name}
-                  </h3>
+              return (
+                <div
+                  key={tool.key}
+                  className="rounded-xl border border-white/10 bg-white/[0.02] p-5"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+                      ✦
+                    </span>
+
+                    <h3 className="font-medium">{tool.name}</h3>
+                  </div>
+
+                  <p className="mt-3 text-sm leading-6 text-zinc-500">
+                    {tool.description}
+                  </p>
+
+                  <div
+                    className={`mt-4 flex items-center gap-2 text-xs ${
+                      enabled ? "text-green-400" : "text-zinc-500"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        enabled ? "bg-green-400" : "bg-zinc-500"
+                      }`}
+                    />
+                    {enabled ? "Enabled for this agent" : "Disabled"}
+                  </div>
                 </div>
-
-                <p className="mt-3 text-sm leading-6 text-zinc-500">
-                  {tool.description}
-                </p>
-
-                <div className="mt-4 flex items-center gap-2 text-xs text-green-400">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-400" />
-                  Available
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
