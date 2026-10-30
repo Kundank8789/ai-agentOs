@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from uuid import uuid4
+from app.models.agent import Agent
 
 import pytest
 
@@ -17,6 +18,26 @@ class FakeResult:
 
     def all(self):
         return self.items
+
+
+class FakeScalarResult(FakeResult):
+    def scalar_one_or_none(self):
+        return self.items[0] if self.items else None
+
+
+class FakeAgent:
+    def __init__(self):
+        self.id = uuid4()
+        self.organization_id = uuid4()
+        self.status = "active"
+        self.instructions = "Execute tasks safely."
+        self.tool_config = {
+            "google_sheets": True,
+            "gmail": True,
+            "crm": True,
+            "web_search": True,
+            "reasoning": True,
+        }
 
 
 class FakeDB:
@@ -61,11 +82,12 @@ class FakeTool:
 
 
 class FakeRegistry:
-    def __init__(self, tool):
+    def __init__(self, tool, tool_name="test_tool"):
         self.tool = tool
+        self.tool_name = tool_name
 
     def get(self, name):
-        if name != "test_tool":
+        if name != self.tool_name:
             raise KeyError(name)
         return self.tool
 
@@ -107,6 +129,7 @@ async def test_execute_step_records_successful_tool_call(monkeypatch):
     result = await runtime._execute_step(
         step=step,
         tool_name="test_tool",
+        allowed_tools={"test_tool"},
         context={"customers": [{"id": "customer-1"}]},
         db=db,
     )
@@ -160,6 +183,7 @@ async def test_execute_step_records_failed_tool_call(monkeypatch):
     result = await runtime._execute_step(
         step=step,
         tool_name="test_tool",
+        allowed_tools={"test_tool"},
         context={},
         db=db,
     )
@@ -204,6 +228,7 @@ async def test_execute_step_records_raised_tool_exception(monkeypatch):
     result = await runtime._execute_step(
         step=step,
         tool_name="test_tool",
+        allowed_tools={"test_tool"},
         db=db,
     )
 
@@ -261,6 +286,7 @@ async def test_safe_retry_recovers_after_transient_error(monkeypatch):
     result = await runtime._execute_step(
         step=step,
         tool_name="web_search",
+        allowed_tools={"web_search"},
         context={},
         db=db,
     )
@@ -299,6 +325,7 @@ async def test_safe_retry_stops_after_three_attempts(monkeypatch):
     result = await runtime._execute_step(
         step=step,
         tool_name="web_search",
+        allowed_tools={"web_search"},
         context={},
         db=db,
     )
@@ -329,6 +356,7 @@ async def test_gmail_is_not_retried_on_transient_error(monkeypatch):
     result = await runtime._execute_step(
         step=step,
         tool_name="gmail",
+        allowed_tools={"gmail"},
         context={},
         db=db,
     )
@@ -372,6 +400,7 @@ async def test_tool_timeout_marks_step_failed(monkeypatch):
     result = await runtime._execute_step(
         step=step,
         tool_name="gmail",
+        allowed_tools={"gmail"},
         operation="send email",
         context={},
         db=db,
@@ -400,18 +429,21 @@ async def test_runtime_cancellation_request_at_final_boundary(monkeypatch):
         agent_id=uuid4(),
     )
 
-    class ResultWithTask(FakeResult):
-        def scalar_one_or_none(self):
-            return task
-
     class CancellationDB(FakeDB):
         def __init__(self):
             super().__init__()
             self.status_refreshes = 0
+            self.agent = FakeAgent()
+            self.agent.organization_id = task.organization_id
 
         async def execute(self, statement):
             self.statements.append(statement)
-            return ResultWithTask([])
+            entity = statement.column_descriptions[0]["entity"]
+            if entity is Agent:
+                return FakeScalarResult([self.agent])
+            if entity.__name__ == "Task":
+                return FakeScalarResult([task])
+            return FakeResult([])
 
         async def refresh(self, instance, attribute_names=None):
             if attribute_names == ["status"]:
@@ -473,26 +505,27 @@ async def test_runtime_cancellation_requested_while_tool_is_running(monkeypatch)
 
     step_data = SimpleNamespace(
         step_number=1,
-        name="Run test tool",
+        name="Run reasoning step",
         description="Simulated slow tool",
-        tool="test_tool",
+        tool="reasoning",
         requires_approval=False,
     )
-
-    class TaskResult(FakeResult):
-        def scalar_one_or_none(self):
-            return task
 
     class RunningCancellationDB(FakeDB):
         def __init__(self):
             super().__init__()
             self.status_refreshes = 0
+            self.agent = FakeAgent()
+            self.agent.organization_id = task.organization_id
 
         async def execute(self, statement):
             self.statements.append(statement)
-            # The first query loads the task. Later queries return
-            # an empty result for existing tool calls and task steps.
-            return TaskResult([])
+            entity = statement.column_descriptions[0]["entity"]
+            if entity is Agent:
+                return FakeScalarResult([self.agent])
+            if entity.__name__ == "Task":
+                return FakeScalarResult([task])
+            return FakeResult([])
 
         async def refresh(self, instance, attribute_names=None):
             if attribute_names == ["status"]:
@@ -529,7 +562,10 @@ async def test_runtime_cancellation_requested_while_tool_is_running(monkeypatch)
 
     db = RunningCancellationDB()
     runtime = AgentRuntime()
-    runtime.registry = FakeRegistry(WaitingTool())
+    runtime.registry = FakeRegistry(
+        WaitingTool(),
+        tool_name="reasoning",
+    )
 
     run_task = asyncio.create_task(runtime.run(task_id=task.id, db=db))
 
@@ -548,3 +584,38 @@ async def test_runtime_cancellation_requested_while_tool_is_running(monkeypatch)
         event["event_type"] == "task.cancelled"
         for event in audit_events
     )
+
+@pytest.mark.asyncio
+async def test_execute_step_blocks_disabled_tool(monkeypatch):
+    db = FakeDB()
+    step = make_step()
+
+    tool = FakeTool(result={"success": True})
+    runtime = AgentRuntime()
+    runtime.registry = FakeRegistry(tool)
+
+    audit_events = []
+
+    async def fake_log_audit(db_arg, **kwargs):
+        audit_events.append(kwargs)
+
+    monkeypatch.setattr(
+        "app.agent.runtime.log_audit",
+        fake_log_audit,
+    )
+
+    result = await runtime._execute_step(
+        step=step,
+        tool_name="test_tool",
+        allowed_tools={"web_search"},
+        context={},
+        db=db,
+    )
+
+    assert step.status == "failed"
+    assert "not enabled" in result["error"]
+    assert tool.received_kwargs is None
+    assert len(db.tool_calls) == 0
+
+    assert len(audit_events) == 1
+    assert audit_events[0]["metadata"]["error"] == "tool_not_enabled" 

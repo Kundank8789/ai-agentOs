@@ -8,6 +8,7 @@ from app.agent.exceptions import TaskCancellationRequested
 
 from app.agent.llm import generate_plan
 from app.models.approval import Approval
+from app.models.agent import Agent
 from app.models.task import Task
 from app.models.task_step import TaskStep
 from app.models.tool_call import ToolCall
@@ -55,6 +56,42 @@ class AgentRuntime:
 
         if task is None:
             raise ValueError("Task not found")
+
+        # -----------------------------------------
+        # Load and validate assigned agent
+        # -----------------------------------------
+        if task.agent_id is None:
+            raise ValueError("Task has no assigned agent.")
+
+        agent_result = await db.execute(
+            select(Agent).where(
+                Agent.id == task.agent_id,
+                Agent.organization_id == task.organization_id,
+            )
+        )
+
+        agent = agent_result.scalar_one_or_none()
+
+        if agent is None:
+            raise ValueError("Assigned agent not found.")
+
+        if agent.status != "active":
+            raise ValueError("Assigned agent is inactive.")
+
+        # Only explicitly enabled tools are allowed.
+        tool_config = agent.tool_config or {}
+
+        available_tools = [
+            tool_name
+            for tool_name in (
+                "google_sheets",
+                "gmail",
+                "crm",
+                "web_search",
+                "reasoning",
+            )
+            if tool_config.get(tool_name) is True
+        ]
 
         if task.status == "cancelled":
             return task
@@ -122,6 +159,8 @@ class AgentRuntime:
                 task_title=task.title,
                 task_description=task.description,
                 memory_context=memory_context,
+                agent_instructions=agent.instructions,
+                available_tools=available_tools,
             )
 
             # -----------------------------------------
@@ -142,6 +181,7 @@ class AgentRuntime:
                     "goal": plan.goal,
                     "memory_count": len(memory_context),
                     "total_memory_count": len(memories),
+                    "available_tool_count": len(available_tools),
                 },
             )
 
@@ -173,6 +213,30 @@ class AgentRuntime:
 
                 db.add(step)
                 await db.flush()
+
+                # -----------------------------------------
+                # Security: reject disabled tools
+                # -----------------------------------------
+                if step_data.tool not in available_tools:
+                    step.status = "failed"
+                    step.error = f"Tool '{step_data.tool}' is not enabled for this agent."
+                    step.output = {"error": step.error}
+
+                    await log_audit(
+                        db,
+                        task_id=task.id,
+                        task_step_id=step.id,
+                        event_type="step.failed",
+                        actor_type="system",
+                        action="validate_tool_permission",
+                        message=step.error,
+                        metadata={
+                            "tool": step_data.tool,
+                            "error": "tool_not_enabled",
+                        },
+                    )
+
+                    continue
 
                 # -----------------------------------------
                 # Approval-required step
@@ -268,6 +332,7 @@ class AgentRuntime:
                 result = await self._execute_step(
                     step=step,
                     tool_name=step_data.tool,
+                    allowed_tools=set(available_tools),
                     operation=step_data.name,
                     context=context,
                     db=db,
@@ -428,12 +493,40 @@ class AgentRuntime:
         self,
         step: TaskStep,
         tool_name: str,
+        allowed_tools: set[str],
         operation: str | None = None,
         context: dict | None = None,
         db: AsyncSession | None = None,
     ) -> dict:
 
         context = context or {}
+
+        # Validate agent tool permissions
+        if tool_name not in allowed_tools:
+            error_message = (
+                f"Tool '{tool_name}' is not enabled for this agent."
+            )
+
+            step.status = "failed"
+            step.error = error_message
+            step.output = {"error": error_message}
+
+            if db is not None:
+                await log_audit(
+                    db,
+                    task_id=step.task_id,
+                    task_step_id=step.id,
+                    event_type="step.failed",
+                    actor_type="system",
+                    action="validate_tool_permission",
+                    message=error_message,
+                    metadata={
+                        "tool": tool_name,
+                        "error": "tool_not_enabled",
+                    },
+                )
+
+            return step.output
 
         # -----------------------------------------
         # Resolve the tool
@@ -673,6 +766,103 @@ class AgentRuntime:
         if step is None:
             raise ValueError("Task step not found")
 
+        if step.task_id != task.id:
+            raise ValueError(
+                "Approval task step does not belong to this task."
+            )
+
+        # -----------------------------------------
+        # Re-validate agent permissions at resume time
+        # -----------------------------------------
+        if task.agent_id is None:
+            error_message = "Task has no assigned agent."
+            step.status = "failed"
+            step.error = error_message
+            step.output = {"error": error_message}
+
+            await log_audit(
+                db,
+                task_id=task.id,
+                task_step_id=step.id,
+                event_type="step.failed",
+                actor_type="system",
+                action="validate_agent_permission",
+                message=error_message,
+                metadata={"error": "no_assigned_agent"},
+            )
+
+            task.status = "failed"
+            await db.commit()
+            await db.refresh(task)
+            return task
+
+        agent = await db.get(Agent, task.agent_id)
+
+        if agent is None:
+            error_message = "Assigned agent not found."
+            step.status = "failed"
+            step.error = error_message
+            step.output = {"error": error_message}
+
+            await log_audit(
+                db,
+                task_id=task.id,
+                task_step_id=step.id,
+                event_type="step.failed",
+                actor_type="system",
+                action="validate_agent_permission",
+                message=error_message,
+                metadata={
+                    "error": "agent_not_found",
+                    "agent_id": str(task.agent_id),
+                },
+            )
+
+            task.status = "failed"
+            await db.commit()
+            await db.refresh(task)
+            return task
+
+        if agent.status != "active":
+            error_message = "Assigned agent is inactive."
+            step.status = "failed"
+            step.error = error_message
+            step.output = {"error": error_message}
+
+            await log_audit(
+                db,
+                task_id=task.id,
+                task_step_id=step.id,
+                event_type="step.failed",
+                actor_type="system",
+                action="validate_agent_permission",
+                message=error_message,
+                metadata={
+                    "error": "agent_inactive",
+                    "agent_id": str(agent.id),
+                    "agent_status": agent.status,
+                },
+            )
+
+            task.status = "failed"
+            await db.commit()
+            await db.refresh(task)
+            return task
+
+        tool_config = agent.tool_config or {}
+
+        available_tools = [
+            tool_name_key
+            for tool_name_key in (
+                "google_sheets",
+                "gmail",
+                "crm",
+                "web_search",
+                "reasoning",
+            )
+            if tool_config.get(tool_name_key) is True
+        ]
+
         # Get data saved when approval was created
         requested_data = approval.requested_data or {}
 
@@ -698,6 +888,7 @@ class AgentRuntime:
         await self._execute_step(
             step=step,
             tool_name=tool_name,
+            allowed_tools=set(available_tools),
             operation=operation,
             context={"customers": customers},
             db=db,

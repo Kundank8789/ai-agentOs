@@ -14,6 +14,8 @@ async def generate_plan(
     task_title: str,
     task_description: str | None,
     memory_context: list[dict] | None = None,
+    agent_instructions: str | None = None,
+    available_tools: list[str] | None = None,
 ) -> ExecutionPlan:
 
     # -----------------------------------------
@@ -34,8 +36,20 @@ async def generate_plan(
     else:
         memory_section = ""
 
+    # -----------------------------------------
+    # Format available tools for the prompt
+    # -----------------------------------------
+    available_tools = available_tools or []
+
+    tools_text = "\n".join(
+        f"- {tool}" for tool in available_tools
+    ) or "- No tools available"
+
     prompt = f"""
 Create an execution plan for this AgentOS business task.
+
+Agent instructions:
+{agent_instructions or "Follow general business safety and accuracy rules."}
 
 Task title:
 {task_title}
@@ -44,15 +58,11 @@ Task description:
 {task_description or "No additional description."}
 {memory_section}
 Available tools:
-- google_sheets
-- gmail
-- crm
-- web_search
-- reasoning
-- approval
+{tools_text}
 
 Rules:
 - Only use tools from the available tools list.
+- Never request a tool that is not enabled for this agent.
 - Every plan step MUST specify exactly one tool.
 - The tool field MUST never be null.
 - Do not execute anything while planning.
@@ -66,7 +76,6 @@ Rules:
 - Do not create duplicate steps for the same action.
 - If an email needs to be sent, create a separate drafting step followed by a sending step.
 - The sending step must have requires_approval=true.
-- Preparing an execution report must use google_sheets.
 - Use memories above to inform decisions when relevant.
 """
 
