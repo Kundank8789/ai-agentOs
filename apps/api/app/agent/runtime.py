@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.exceptions import TaskCancellationRequested
 
@@ -26,6 +26,10 @@ from app.tools.reasoning import ReasoningTool
 from app.tools.registry import ToolRegistry
 
 TOOL_TIMEOUT_SECONDS = 60
+
+
+class ApprovalAlreadyClaimed(Exception):
+    """Raised when an approval is already being processed or completed."""
 
 
 class AgentRuntime:
@@ -731,7 +735,41 @@ class AgentRuntime:
         db: AsyncSession,
     ) -> Task:
 
-        # Find approval
+        # Atomically claim approval to prevent duplicate execution
+        claim_result = await db.execute(
+            update(Approval)
+            .where(
+                Approval.id == approval_id,
+                Approval.status == "approved",
+            )
+            .values(status="executing")
+            .returning(Approval.id)
+        )
+
+        claimed_id = claim_result.scalar_one_or_none()
+
+        if claimed_id is None:
+            await db.rollback()
+
+            existing_result = await db.execute(
+                select(Approval).where(
+                    Approval.id == approval_id
+                )
+            )
+
+            existing_approval = existing_result.scalar_one_or_none()
+
+            if existing_approval is None:
+                raise ValueError("Approval not found")
+
+            raise ApprovalAlreadyClaimed(
+                f"Approval cannot be executed. Current status: {existing_approval.status}"
+            )
+
+        # Commit the claim before executing any external tool
+        await db.commit()
+
+        # Reload the claimed approval
         result = await db.execute(
             select(Approval).where(
                 Approval.id == approval_id
@@ -743,11 +781,6 @@ class AgentRuntime:
         if approval is None:
             raise ValueError("Approval not found")
 
-        if approval.status != "approved":
-            raise ValueError(
-                f"Approval is not approved. Current status: {approval.status}"
-            )
-
         # Find task
         task = await db.get(
             Task,
@@ -755,6 +788,8 @@ class AgentRuntime:
         )
 
         if task is None:
+            approval.status = "failed"
+            await db.commit()
             raise ValueError("Task not found")
 
         # Find task step
@@ -764,9 +799,13 @@ class AgentRuntime:
         )
 
         if step is None:
+            approval.status = "failed"
+            await db.commit()
             raise ValueError("Task step not found")
 
         if step.task_id != task.id:
+            approval.status = "failed"
+            await db.commit()
             raise ValueError(
                 "Approval task step does not belong to this task."
             )
@@ -792,6 +831,7 @@ class AgentRuntime:
             )
 
             task.status = "failed"
+            approval.status = "failed"
             await db.commit()
             await db.refresh(task)
             return task
@@ -819,6 +859,7 @@ class AgentRuntime:
             )
 
             task.status = "failed"
+            approval.status = "failed"
             await db.commit()
             await db.refresh(task)
             return task
@@ -845,6 +886,7 @@ class AgentRuntime:
             )
 
             task.status = "failed"
+            approval.status = "failed"
             await db.commit()
             await db.refresh(task)
             return task
@@ -908,6 +950,11 @@ class AgentRuntime:
 
             task.status = "waiting_approval"
 
+            if step.status == "completed":
+                approval.status = "executed"
+            else:
+                approval.status = "failed"
+
         else:
 
             failed_result = await db.execute(
@@ -921,6 +968,7 @@ class AgentRuntime:
 
             if failed_steps:
                 task.status = "failed"
+                approval.status = "failed"
 
                 # -----------------------------------------
                 # Audit: task.failed (post-approval)
@@ -942,6 +990,7 @@ class AgentRuntime:
 
             else:
                 task.status = "completed"
+                approval.status = "executed"
 
                 # -----------------------------------------
                 # Save task completion memory

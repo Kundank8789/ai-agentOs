@@ -2,10 +2,10 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.runtime import AgentRuntime
+from app.agent.runtime import AgentRuntime, ApprovalAlreadyClaimed
 from app.auth import get_current_user, get_db
 from app.models.approval import Approval
 from app.models.task import Task
@@ -65,14 +65,38 @@ async def approve_approval(
             detail="Approval not found",
         )
 
-    if approval.status != "pending":
+    now = datetime.now(timezone.utc)
+
+    # Atomically approve only if the approval is still pending
+    claim_result = await db.execute(
+        update(Approval)
+        .where(
+            Approval.id == approval_id,
+            Approval.status == "pending",
+            Approval.task_id.in_(
+                select(Task.id).where(
+                    Task.organization_id == current_user.organization_id
+                )
+            ),
+        )
+        .values(
+            status="approved",
+            decided_at=now,
+        )
+        .returning(Approval.id)
+    )
+
+    updated_id = claim_result.scalar_one_or_none()
+
+    if updated_id is None:
+        await db.rollback()
         raise HTTPException(
             status_code=409,
-            detail=f"Approval is already {approval.status}",
+            detail="Approval is no longer pending.",
         )
 
     approval.status = "approved"
-    approval.decided_at = datetime.now(timezone.utc)
+    approval.decided_at = now
 
     await log_audit(
         db,
@@ -98,7 +122,11 @@ async def approve_approval(
             approval_id=approval_id,
             db=db,
         )
-
+    except ApprovalAlreadyClaimed as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=500,
@@ -140,14 +168,38 @@ async def reject_approval(
             detail="Approval not found",
         )
 
-    if approval.status != "pending":
+    now = datetime.now(timezone.utc)
+
+    # Atomically reject only if the approval is still pending
+    reject_result = await db.execute(
+        update(Approval)
+        .where(
+            Approval.id == approval_id,
+            Approval.status == "pending",
+            Approval.task_id.in_(
+                select(Task.id).where(
+                    Task.organization_id == current_user.organization_id
+                )
+            ),
+        )
+        .values(
+            status="rejected",
+            decided_at=now,
+        )
+        .returning(Approval.id)
+    )
+
+    rejected_id = reject_result.scalar_one_or_none()
+
+    if rejected_id is None:
+        await db.rollback()
         raise HTTPException(
             status_code=409,
-            detail=f"Approval is already {approval.status}",
+            detail="Approval is no longer pending.",
         )
 
     approval.status = "rejected"
-    approval.decided_at = datetime.now(timezone.utc)
+    approval.decided_at = now
 
     task = await db.get(Task, approval.task_id)
 
