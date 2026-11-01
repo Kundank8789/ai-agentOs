@@ -9,6 +9,7 @@ from app.agent.runtime import AgentRuntime, ApprovalAlreadyClaimed
 from app.auth import get_current_user, get_db
 from app.models.approval import Approval
 from app.models.task import Task
+from app.models.task_step import TaskStep
 from app.models.user import User
 from app.services.audit import log_audit
 
@@ -225,3 +226,77 @@ async def reject_approval(
     await db.refresh(approval)
 
     return approval
+
+
+@router.get("/reconciliation/preview")
+async def preview_approval_reconciliation(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Read-only preview of historical approvals eligible for reconciliation.
+
+    No external tools are executed.
+    No database records are modified.
+    """
+
+    result = await db.execute(
+        select(Approval)
+        .join(Task, Approval.task_id == Task.id)
+        .where(
+            Task.organization_id == current_user.organization_id,
+            Approval.status == "approved",
+        )
+        .order_by(Approval.created_at.desc())
+    )
+
+    approvals = result.scalars().all()
+
+    eligible = []
+    needs_review = []
+
+    for approval in approvals:
+        if approval.task_step_id is None:
+            needs_review.append({
+                "approval_id": str(approval.id),
+                "reason": "Missing task step.",
+            })
+            continue
+
+        step = await db.get(TaskStep, approval.task_step_id)
+
+        if (
+            step is None
+            or step.task_id != approval.task_id
+            or step.status != "completed"
+        ):
+            needs_review.append({
+                "approval_id": str(approval.id),
+                "task_id": str(approval.task_id),
+                "action": approval.action,
+                "task_step_id": str(approval.task_step_id),
+                "step_status": step.status if step else None,
+                "step_exists": step is not None,
+                "step_belongs_to_task": (
+                    step.task_id == approval.task_id if step else False
+                ),
+                "reason": "Task step is missing, belongs to another task, or is not completed.",
+            })
+            continue
+
+        eligible.append({
+            "approval_id": str(approval.id),
+            "task_id": str(approval.task_id),
+            "action": approval.action,
+            "task_step_id": str(step.id),
+            "step_status": step.status,
+            "suggested_status": "executed",
+        })
+
+    return {
+        "total_approved": len(approvals),
+        "eligible_count": len(eligible),
+        "needs_review_count": len(needs_review),
+        "eligible": eligible,
+        "needs_review": needs_review,
+    }
