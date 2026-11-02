@@ -1,13 +1,15 @@
 from uuid import UUID
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.agent.runtime import AgentRuntime, ApprovalAlreadyClaimed
 from app.auth import get_current_user, get_db
 from app.models.approval import Approval
+from app.models.audit_log import AuditLog
 from app.models.task import Task
 from app.models.task_step import TaskStep
 from app.models.user import User
@@ -299,4 +301,135 @@ async def preview_approval_reconciliation(
         "needs_review_count": len(needs_review),
         "eligible": eligible,
         "needs_review": needs_review,
+    }
+
+
+@router.post("/reconciliation/apply")
+async def apply_approval_reconciliation(
+    confirm: bool = Query(
+        False,
+        description="Must be true to apply historical reconciliation.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Reconcile verified historical approvals.
+
+    - Only approved records are considered.
+    - Task steps must belong to the same task and be completed.
+    - approval.approved must precede step.completed in the audit log.
+    - No external tools are executed.
+    - Repeated calls are idempotent.
+    """
+
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Set confirm=true to apply reconciliation.",
+        )
+
+    approval_event = aliased(AuditLog)
+    completion_event = aliased(AuditLog)
+
+    completion_exists = exists(
+        select(completion_event.id).where(
+            completion_event.task_id == approval_event.task_id,
+            completion_event.task_step_id == approval_event.task_step_id,
+            completion_event.event_type == "step.completed",
+            completion_event.created_at > approval_event.created_at,
+        )
+    )
+
+    approval_sequence_exists = exists(
+        select(approval_event.id).where(
+            approval_event.task_id == Approval.task_id,
+            approval_event.task_step_id == Approval.task_step_id,
+            approval_event.event_type == "approval.approved",
+            completion_exists,
+        )
+    )
+
+    # Find verified candidates:
+    # - owned by current org
+    # - still "approved"
+    # - step exists, belongs to same task, is completed
+    # - audit trail proves approval.approved happened before step.completed
+    candidates_result = await db.execute(
+        select(Approval)
+        .join(Task, Approval.task_id == Task.id)
+        .join(TaskStep, Approval.task_step_id == TaskStep.id)
+        .where(
+            Task.organization_id == current_user.organization_id,
+            Approval.status == "approved",
+            Approval.task_step_id.is_not(None),
+            TaskStep.task_id == Approval.task_id,
+            TaskStep.status == "completed",
+            approval_sequence_exists,
+        )
+    )
+
+    candidates = candidates_result.scalars().all()
+
+    if not candidates:
+        return {
+            "updated": 0,
+            "approval_ids": [],
+            "message": "No eligible approvals found.",
+        }
+
+    candidate_ids = [c.id for c in candidates]
+    candidate_map = {c.id: c for c in candidates}
+
+    # Atomic update — WHERE status='approved' makes repeated calls idempotent
+    update_result = await db.execute(
+        update(Approval)
+        .where(
+            Approval.id.in_(candidate_ids),
+            Approval.status == "approved",
+        )
+        .values(status="executed")
+        .returning(Approval.id)
+    )
+
+    updated_ids = update_result.scalars().all()
+
+    # Audit each transition
+    for approval_id in updated_ids:
+        approval = candidate_map[approval_id]
+
+        await log_audit(
+            db,
+            task_id=approval.task_id,
+            task_step_id=approval.task_step_id,
+            event_type="approval.reconciled",
+            actor_type="system",
+            action="reconcile_approval",
+            message=(
+                "Historical approval reconciled to 'executed' "
+                "based on audit-verified step completion."
+            ),
+            metadata={
+                "approval_id": str(approval.id),
+                "reconciled_by_user_id": str(current_user.id),
+                "organization_id": str(current_user.organization_id),
+            },
+        )
+
+    await db.commit()
+
+    skipped = len(candidate_ids) - len(updated_ids)
+
+    return {
+        "updated": len(updated_ids),
+        "skipped": skipped,
+        "approval_ids": [str(i) for i in updated_ids],
+        "message": (
+            f"Reconciled {len(updated_ids)} approval(s) to 'executed'."
+            + (
+                f" {skipped} skipped (no longer approved)."
+                if skipped
+                else ""
+            )
+        ),
     }
