@@ -1,0 +1,374 @@
+
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  getAnalyticsOverview,
+  getAgentPerformance,
+  getToolAnalytics,
+  getRecentTasks,
+  type AnalyticsOverview,
+  type AgentPerformance,
+  type ToolAnalytics,
+  type RecentTask,
+} from "@/lib/api";
+
+const initialOverview: AnalyticsOverview = {
+  total_tasks: 0,
+  completed_tasks: 0,
+  failed_tasks: 0,
+  active_tasks: 0,
+  success_rate: 0,
+  average_execution_seconds: 0,
+};
+
+function formatDuration(seconds: number) {
+  if (seconds < 60) return `${seconds.toFixed(1)} sec`;
+  if (seconds < 3600) return `${(seconds / 60).toFixed(1)} min`;
+  return `${(seconds / 3600).toFixed(1)} hrs`;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    completed: "bg-emerald-500/10 text-emerald-600",
+    failed: "bg-red-500/10 text-red-500",
+    running: "bg-blue-500/10 text-blue-500",
+    pending: "bg-amber-500/10 text-amber-600",
+    waiting_approval: "bg-purple-500/10 text-purple-500",
+  };
+
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-xs font-medium ${
+        styles[status] || "bg-gray-500/10 text-gray-500"
+      }`}
+    >
+      {status.replaceAll("_", " ")}
+    </span>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string | number;
+  description: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+      <p className="text-sm text-gray-500">{label}</p>
+      <h2 className="mt-3 text-3xl font-bold tracking-tight">{value}</h2>
+      <p className="mt-2 text-xs text-gray-400">{description}</p>
+    </div>
+  );
+}
+
+export default function AnalyticsPage() {
+  const [overview, setOverview] =
+    useState<AnalyticsOverview>(initialOverview);
+
+  const [agents, setAgents] = useState<AgentPerformance[]>([]);
+  const [tools, setTools] = useState<ToolAnalytics[]>([]);
+  const [recentTasks, setRecentTasks] = useState<RecentTask[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAnalytics() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const [overviewData, agentData, toolData, taskData] =
+          await Promise.all([
+            getAnalyticsOverview(),
+            getAgentPerformance(),
+            getToolAnalytics(),
+            getRecentTasks(),
+          ]);
+
+        if (!active) return;
+
+        setOverview(overviewData);
+        setAgents(agentData);
+        setTools(toolData);
+        setRecentTasks(taskData);
+      } catch (err) {
+        if (active) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load analytics."
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadAnalytics();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const maxToolCalls = Math.max(
+    1,
+    ...tools.map((tool) => tool.total_calls)
+  );
+
+  const maxAgentTasks = Math.max(
+    1,
+    ...agents.map((agent) => agent.total_tasks)
+  );
+
+  return (
+    <main className="min-h-screen bg-gray-50 px-5 py-8 text-gray-900 dark:bg-gray-950 dark:text-white md:px-10">
+      <div className="mx-auto max-w-7xl space-y-8">
+
+        <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm font-medium text-blue-600">
+              AGENTOS / ANALYTICS
+            </p>
+            <h1 className="mt-2 text-3xl font-bold">
+              Performance Analytics
+            </h1>
+            <p className="mt-2 text-sm text-gray-500">
+              Monitor agent execution, productivity and tool usage.
+            </p>
+          </div>
+
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:hover:bg-gray-800"
+          >
+            Refresh analytics
+          </button>
+        </header>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <p className="text-sm text-gray-500">
+            Loading analytics...
+          </p>
+        )}
+
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="Total executions"
+            value={overview.total_tasks}
+            description="All organization tasks"
+          />
+          <MetricCard
+            label="Completed tasks"
+            value={overview.completed_tasks}
+            description="Successfully completed"
+          />
+          <MetricCard
+            label="Failed tasks"
+            value={overview.failed_tasks}
+            description="Tasks requiring attention"
+          />
+          <MetricCard
+            label="Active tasks"
+            value={overview.active_tasks}
+            description="Pending, running or awaiting approval"
+          />
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <p className="text-sm text-gray-500">Task success rate</p>
+            <div className="mt-3 flex items-end gap-2">
+              <span className="text-4xl font-bold">
+                {overview.success_rate.toFixed(1)}%
+              </span>
+            </div>
+            <div className="mt-5 h-3 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all"
+                style={{
+                  width: `${Math.min(100, Math.max(0, overview.success_rate))}%`,
+                }}
+              />
+            </div>
+            <p className="mt-3 text-xs text-gray-400">
+              Completed tasks divided by completed plus failed tasks.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <p className="text-sm text-gray-500">
+              Average task lifetime
+            </p>
+            <h2 className="mt-3 text-4xl font-bold">
+              {formatDuration(overview.average_execution_seconds)}
+            </h2>
+            <p className="mt-3 text-xs text-gray-400">
+              Approximate duration from task creation to last update.
+            </p>
+          </div>
+        </section>
+
+        <section className="grid gap-6 xl:grid-cols-2">
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <h2 className="text-lg font-semibold">
+              Agent performance
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Execution volume by agent
+            </p>
+
+            <div className="mt-6 space-y-6">
+              {agents.length === 0 && (
+                <p className="text-sm text-gray-400">
+                  No agent activity available.
+                </p>
+              )}
+
+              {agents.map((agent) => (
+                <div key={agent.agent_id}>
+                  <div className="mb-2 flex justify-between gap-3">
+                    <div>
+                      <p className="font-medium">{agent.name}</p>
+                      <p className="text-xs text-gray-500">
+                        {agent.completed_tasks} completed · {agent.failed_tasks} failed
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold">
+                        {agent.total_tasks}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {agent.success_rate}% success
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                    <div
+                      className="h-full rounded-full bg-blue-500"
+                      style={{
+                        width: `${(agent.total_tasks / maxAgentTasks) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+            <h2 className="text-lg font-semibold">
+              Tool usage analytics
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Calls made by connected tools
+            </p>
+
+            <div className="mt-6 space-y-6">
+              {tools.length === 0 && (
+                <p className="text-sm text-gray-400">
+                  No tool usage available.
+                </p>
+              )}
+
+              {tools.map((tool) => (
+                <div key={tool.tool_name}>
+                  <div className="mb-2 flex justify-between">
+                    <span className="font-medium">{tool.tool_name}</span>
+                    <span className="text-sm text-gray-500">
+                      {tool.total_calls} calls
+                    </span>
+                  </div>
+
+                  <div className="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                    <div
+                      className="h-full rounded-full bg-violet-500"
+                      style={{
+                        width: `${(tool.total_calls / maxToolCalls) * 100}%`,
+                      }}
+                    />
+                  </div>
+
+                  <p className="mt-2 text-xs text-gray-400">
+                    {tool.successful_calls} successful · {tool.failed_calls} failed
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+          <div className="border-b border-gray-200 p-6 dark:border-gray-800">
+            <h2 className="text-lg font-semibold">
+              Recent executions
+            </h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Latest tasks across your organization
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-800/50">
+                <tr>
+                  <th className="px-6 py-4">Task</th>
+                  <th className="px-6 py-4">Agent</th>
+                  <th className="px-6 py-4">Status</th>
+                  <th className="px-6 py-4">Created</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {recentTasks.map((task) => (
+                  <tr key={task.task_id}>
+                    <td className="px-6 py-4 font-medium">
+                      {task.title}
+                    </td>
+                    <td className="px-6 py-4 text-gray-500">
+                      {task.agent_name || "Unassigned"}
+                    </td>
+                    <td className="px-6 py-4">
+                      <StatusBadge status={task.status} />
+                    </td>
+                    <td className="px-6 py-4 text-gray-500">
+                      {new Date(task.created_at).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+
+                {recentTasks.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-6 py-10 text-center text-gray-400"
+                    >
+                      No recent executions available.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  );
+}

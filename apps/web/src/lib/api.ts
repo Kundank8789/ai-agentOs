@@ -473,3 +473,78 @@ export async function cancelTask(taskId: string) {
 
   return response.json();
 }
+
+export type AnalyticsOverview = {
+  total_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  active_tasks: number;
+  success_rate: number;
+  average_execution_seconds: number;
+};
+
+export type AgentPerformance = {
+  agent_id: string;
+  name: string;
+  status: string;
+  total_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  success_rate: number;
+};
+
+export type ToolAnalytics = {
+  tool_name: string;
+  total_calls: number;
+  successful_calls: number;
+  failed_calls: number;
+};
+
+export type RecentTask = {
+  task_id: string;
+  title: string;
+  status: string;
+  agent_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getAnalyticsOverview(): Promise<AnalyticsOverview> {
+  const response = await apiFetch("/analytics/overview");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch analytics overview");
+  }
+
+  return response.json();
+}
+
+export async function getAgentPerformance(): Promise<AgentPerformance[]> {
+  const response = await apiFetch("/analytics/agents");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch agent performance");
+  }
+
+  return response.json();
+}
+
+export async function getToolAnalytics(): Promise<ToolAnalytics[]> {
+  const response = await apiFetch("/analytics/tools");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch tool analytics");
+  }
+
+  return response.json();
+}
+
+export async function getRecentTasks(): Promise<RecentTask[]> {
+  const response = await apiFetch("/analytics/recent-tasks?limit=10");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch recent tasks");
+  }
+
+  return response.json();
+}
