@@ -235,6 +235,13 @@ export default function DashboardPage() {
             >
               Agents
             </Link>
+
+            <Link
+              href="/analytics"
+              className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/10"
+            >
+              Analytics
+            </Link>
           </div>
         </header>
 
