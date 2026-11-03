@@ -1,0 +1,214 @@
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import select, func, case
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import get_current_user, get_db
+from app.models.user import User
+from app.models.task import Task
+from app.models.agent import Agent
+from app.models.task_step import TaskStep
+from app.models.tool_call import ToolCall
+
+
+router = APIRouter(
+    prefix="/analytics",
+    tags=["Analytics"],
+)
+
+
+@router.get("/overview")
+async def get_analytics_overview(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    organization_id = current_user.organization_id
+
+    result = await db.execute(
+        select(
+            func.count(Task.id).label("total_tasks"),
+            func.count(
+                case((Task.status == "completed", 1))
+            ).label("completed_tasks"),
+            func.count(
+                case((Task.status == "failed", 1))
+            ).label("failed_tasks"),
+            func.count(
+                case(
+                    (
+                        Task.status.in_(
+                            ["pending", "running", "waiting_approval"]
+                        ),
+                        1,
+                    )
+                )
+            ).label("active_tasks"),
+        ).where(Task.organization_id == organization_id)
+    )
+
+    overview = result.one()
+
+    finished_tasks = overview.completed_tasks + overview.failed_tasks
+
+    success_rate = (
+        round(
+            (overview.completed_tasks / finished_tasks) * 100,
+            2,
+        )
+        if finished_tasks
+        else 0
+    )
+
+    duration_result = await db.execute(
+        select(
+            func.avg(
+                func.extract(
+                    "epoch",
+                    Task.updated_at - Task.created_at,
+                )
+            )
+        ).where(
+            Task.organization_id == organization_id,
+            Task.status.in_(["completed", "failed"]),
+        )
+    )
+
+    average_duration = duration_result.scalar()
+
+    return {
+        "total_tasks": overview.total_tasks,
+        "completed_tasks": overview.completed_tasks,
+        "failed_tasks": overview.failed_tasks,
+        "active_tasks": overview.active_tasks,
+        "success_rate": success_rate,
+        "average_execution_seconds": (
+            round(float(average_duration), 2)
+            if average_duration is not None
+            else 0
+        ),
+    }
+
+
+@router.get("/agents")
+async def get_agent_performance(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(
+            Agent.id,
+            Agent.name,
+            Agent.status,
+            func.count(Task.id).label("total_tasks"),
+            func.count(
+                case((Task.status == "completed", 1))
+            ).label("completed_tasks"),
+            func.count(
+                case((Task.status == "failed", 1))
+            ).label("failed_tasks"),
+        )
+        .outerjoin(
+            Task,
+            (Task.agent_id == Agent.id)
+            & (Task.organization_id == current_user.organization_id),
+        )
+        .where(Agent.organization_id == current_user.organization_id)
+        .group_by(Agent.id, Agent.name, Agent.status)
+        .order_by(func.count(Task.id).desc())
+    )
+
+    agents = result.all()
+
+    return [
+        {
+            "agent_id": str(agent.id),
+            "name": agent.name,
+            "status": agent.status,
+            "total_tasks": agent.total_tasks,
+            "completed_tasks": agent.completed_tasks,
+            "failed_tasks": agent.failed_tasks,
+            "success_rate": (
+                round(
+                    agent.completed_tasks
+                    / (agent.completed_tasks + agent.failed_tasks)
+                    * 100,
+                    2,
+                )
+                if agent.completed_tasks + agent.failed_tasks
+                else 0
+            ),
+        }
+        for agent in agents
+    ]
+
+
+@router.get("/tools")
+async def get_tool_analytics(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(
+            ToolCall.tool_name,
+            func.count(ToolCall.id).label("total_calls"),
+            func.count(
+                case((ToolCall.status == "completed", 1))
+            ).label("successful_calls"),
+            func.count(
+                case((ToolCall.status == "failed", 1))
+            ).label("failed_calls"),
+        )
+        .join(TaskStep, ToolCall.task_step_id == TaskStep.id)
+        .join(Task, TaskStep.task_id == Task.id)
+        .where(Task.organization_id == current_user.organization_id)
+        .group_by(ToolCall.tool_name)
+        .order_by(func.count(ToolCall.id).desc())
+    )
+
+    return [
+        {
+            "tool_name": row.tool_name,
+            "total_calls": row.total_calls,
+            "successful_calls": row.successful_calls,
+            "failed_calls": row.failed_calls,
+        }
+        for row in result.all()
+    ]
+
+
+@router.get("/recent-tasks")
+async def get_recent_tasks(
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    safe_limit = max(1, min(limit, 50))
+
+    result = await db.execute(
+        select(
+            Task.id,
+            Task.title,
+            Task.status,
+            Task.created_at,
+            Task.updated_at,
+            Agent.name.label("agent_name"),
+        )
+        .outerjoin(Agent, Task.agent_id == Agent.id)
+        .where(Task.organization_id == current_user.organization_id)
+        .order_by(Task.created_at.desc())
+        .limit(safe_limit)
+    )
+
+    return [
+        {
+            "task_id": str(row.id),
+            "title": row.title,
+            "status": row.status,
+            "agent_name": row.agent_name,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
+        for row in result.all()
+    ]
