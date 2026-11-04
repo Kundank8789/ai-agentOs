@@ -1,5 +1,6 @@
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func, case
@@ -19,12 +20,27 @@ router = APIRouter(
 )
 
 
+def get_date_cutoff(days: Literal[7, 30] | None):
+    """Return the UTC cutoff for the selected analytics period."""
+    if days is None:
+        return None
+
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
 @router.get("/overview")
 async def get_analytics_overview(
+    days: Literal[7, 30] | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     organization_id = current_user.organization_id
+    cutoff = get_date_cutoff(days)
+
+    task_filters = [Task.organization_id == organization_id]
+
+    if cutoff is not None:
+        task_filters.append(Task.created_at >= cutoff)
 
     result = await db.execute(
         select(
@@ -45,16 +61,18 @@ async def get_analytics_overview(
                     )
                 )
             ).label("active_tasks"),
-        ).where(Task.organization_id == organization_id)
+        ).where(*task_filters)
     )
 
     overview = result.one()
 
-    finished_tasks = overview.completed_tasks + overview.failed_tasks
+    finished_tasks = (
+        overview.completed_tasks + overview.failed_tasks
+    )
 
     success_rate = (
         round(
-            (overview.completed_tasks / finished_tasks) * 100,
+            overview.completed_tasks / finished_tasks * 100,
             2,
         )
         if finished_tasks
@@ -70,7 +88,7 @@ async def get_analytics_overview(
                 )
             )
         ).where(
-            Task.organization_id == organization_id,
+            *task_filters,
             Task.status.in_(["completed", "failed"]),
         )
     )
@@ -93,9 +111,21 @@ async def get_analytics_overview(
 
 @router.get("/agents")
 async def get_agent_performance(
+    days: Literal[7, 30] | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    organization_id = current_user.organization_id
+    cutoff = get_date_cutoff(days)
+
+    task_join_conditions = [
+        Task.agent_id == Agent.id,
+        Task.organization_id == organization_id,
+    ]
+
+    if cutoff is not None:
+        task_join_conditions.append(Task.created_at >= cutoff)
+
     result = await db.execute(
         select(
             Agent.id,
@@ -109,12 +139,8 @@ async def get_agent_performance(
                 case((Task.status == "failed", 1))
             ).label("failed_tasks"),
         )
-        .outerjoin(
-            Task,
-            (Task.agent_id == Agent.id)
-            & (Task.organization_id == current_user.organization_id),
-        )
-        .where(Agent.organization_id == current_user.organization_id)
+        .outerjoin(Task, *task_join_conditions)
+        .where(Agent.organization_id == organization_id)
         .group_by(Agent.id, Agent.name, Agent.status)
         .order_by(func.count(Task.id).desc())
     )
@@ -146,9 +172,18 @@ async def get_agent_performance(
 
 @router.get("/tools")
 async def get_tool_analytics(
+    days: Literal[7, 30] | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    organization_id = current_user.organization_id
+    cutoff = get_date_cutoff(days)
+
+    task_filters = [Task.organization_id == organization_id]
+
+    if cutoff is not None:
+        task_filters.append(Task.created_at >= cutoff)
+
     result = await db.execute(
         select(
             ToolCall.tool_name,
@@ -162,7 +197,7 @@ async def get_tool_analytics(
         )
         .join(TaskStep, ToolCall.task_step_id == TaskStep.id)
         .join(Task, TaskStep.task_id == Task.id)
-        .where(Task.organization_id == current_user.organization_id)
+        .where(*task_filters)
         .group_by(ToolCall.tool_name)
         .order_by(func.count(ToolCall.id).desc())
     )
@@ -181,10 +216,18 @@ async def get_tool_analytics(
 @router.get("/recent-tasks")
 async def get_recent_tasks(
     limit: int = 10,
+    days: Literal[7, 30] | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    organization_id = current_user.organization_id
+    cutoff = get_date_cutoff(days)
     safe_limit = max(1, min(limit, 50))
+
+    task_filters = [Task.organization_id == organization_id]
+
+    if cutoff is not None:
+        task_filters.append(Task.created_at >= cutoff)
 
     result = await db.execute(
         select(
@@ -196,7 +239,7 @@ async def get_recent_tasks(
             Agent.name.label("agent_name"),
         )
         .outerjoin(Agent, Task.agent_id == Agent.id)
-        .where(Task.organization_id == current_user.organization_id)
+        .where(*task_filters)
         .order_by(Task.created_at.desc())
         .limit(safe_limit)
     )

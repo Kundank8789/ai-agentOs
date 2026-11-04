@@ -509,8 +509,18 @@ export type RecentTask = {
   updated_at: string;
 };
 
-export async function getAnalyticsOverview(): Promise<AnalyticsOverview> {
-  const response = await apiFetch("/analytics/overview");
+export type AnalyticsDateRange = 7 | 30 | null;
+
+function analyticsQuery(days: AnalyticsDateRange): string {
+  return days === null ? "" : `?days=${days}`;
+}
+
+export async function getAnalyticsOverview(
+  days: AnalyticsDateRange = null,
+): Promise<AnalyticsOverview> {
+  const response = await apiFetch(
+    `/analytics/overview${analyticsQuery(days)}`,
+  );
 
   if (!response.ok) {
     throw new Error("Failed to fetch analytics overview");
@@ -519,8 +529,12 @@ export async function getAnalyticsOverview(): Promise<AnalyticsOverview> {
   return response.json();
 }
 
-export async function getAgentPerformance(): Promise<AgentPerformance[]> {
-  const response = await apiFetch("/analytics/agents");
+export async function getAgentPerformance(
+  days: AnalyticsDateRange = null,
+): Promise<AgentPerformance[]> {
+  const response = await apiFetch(
+    `/analytics/agents${analyticsQuery(days)}`,
+  );
 
   if (!response.ok) {
     throw new Error("Failed to fetch agent performance");
@@ -529,8 +543,12 @@ export async function getAgentPerformance(): Promise<AgentPerformance[]> {
   return response.json();
 }
 
-export async function getToolAnalytics(): Promise<ToolAnalytics[]> {
-  const response = await apiFetch("/analytics/tools");
+export async function getToolAnalytics(
+  days: AnalyticsDateRange = null,
+): Promise<ToolAnalytics[]> {
+  const response = await apiFetch(
+    `/analytics/tools${analyticsQuery(days)}`,
+  );
 
   if (!response.ok) {
     throw new Error("Failed to fetch tool analytics");
@@ -539,8 +557,16 @@ export async function getToolAnalytics(): Promise<ToolAnalytics[]> {
   return response.json();
 }
 
-export async function getRecentTasks(): Promise<RecentTask[]> {
-  const response = await apiFetch("/analytics/recent-tasks?limit=10");
+export async function getRecentTasks(
+  days: AnalyticsDateRange = null,
+): Promise<RecentTask[]> {
+  const query = days === null
+    ? "?limit=10"
+    : `?limit=10&days=${days}`;
+
+  const response = await apiFetch(
+    `/analytics/recent-tasks${query}`,
+  );
 
   if (!response.ok) {
     throw new Error("Failed to fetch recent tasks");

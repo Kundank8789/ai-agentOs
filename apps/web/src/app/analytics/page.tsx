@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -11,6 +10,7 @@ import {
   type AgentPerformance,
   type ToolAnalytics,
   type RecentTask,
+  type AnalyticsDateRange,
 } from "@/lib/api";
 
 const initialOverview: AnalyticsOverview = {
@@ -77,6 +77,9 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [dateRange, setDateRange] =
+    useState<AnalyticsDateRange>(null);
+
   useEffect(() => {
     let active = true;
 
@@ -87,10 +90,10 @@ export default function AnalyticsPage() {
 
         const [overviewData, agentData, toolData, taskData] =
           await Promise.all([
-            getAnalyticsOverview(),
-            getAgentPerformance(),
-            getToolAnalytics(),
-            getRecentTasks(),
+            getAnalyticsOverview(dateRange),
+            getAgentPerformance(dateRange),
+            getToolAnalytics(dateRange),
+            getRecentTasks(dateRange),
           ]);
 
         if (!active) return;
@@ -117,7 +120,7 @@ export default function AnalyticsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [dateRange]);
 
   const maxToolCalls = Math.max(
     1,
@@ -146,12 +149,31 @@ export default function AnalyticsPage() {
             </p>
           </div>
 
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:hover:bg-gray-800"
-          >
-            Refresh analytics
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              value={dateRange ?? "all"}
+              onChange={(event) => {
+                const value = event.target.value;
+
+                setDateRange(
+                  value === "all" ? null : Number(value) as 7 | 30,
+                );
+              }}
+              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium dark:border-gray-800 dark:bg-gray-900"
+              aria-label="Analytics date range"
+            >
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="all">All time</option>
+            </select>
+
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:hover:bg-gray-800"
+            >
+              Refresh analytics
+            </button>
+          </div>
         </header>
 
         {error && (
