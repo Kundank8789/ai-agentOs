@@ -1,9 +1,7 @@
-
 from datetime import datetime, timedelta, timezone
-from typing import Literal
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, get_db
@@ -20,7 +18,7 @@ router = APIRouter(
 )
 
 
-def get_date_cutoff(days: Literal[7, 30] | None):
+def get_date_cutoff(days: int | None):
     """Return the UTC cutoff for the selected analytics period."""
     if days is None:
         return None
@@ -30,7 +28,7 @@ def get_date_cutoff(days: Literal[7, 30] | None):
 
 @router.get("/overview")
 async def get_analytics_overview(
-    days: Literal[7, 30] | None = None,
+    days: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -111,7 +109,7 @@ async def get_analytics_overview(
 
 @router.get("/agents")
 async def get_agent_performance(
-    days: Literal[7, 30] | None = None,
+    days: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -139,7 +137,7 @@ async def get_agent_performance(
                 case((Task.status == "failed", 1))
             ).label("failed_tasks"),
         )
-        .outerjoin(Task, *task_join_conditions)
+        .outerjoin(Task, and_(*task_join_conditions))
         .where(Agent.organization_id == organization_id)
         .group_by(Agent.id, Agent.name, Agent.status)
         .order_by(func.count(Task.id).desc())
@@ -172,7 +170,7 @@ async def get_agent_performance(
 
 @router.get("/tools")
 async def get_tool_analytics(
-    days: Literal[7, 30] | None = None,
+    days: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -189,7 +187,7 @@ async def get_tool_analytics(
             ToolCall.tool_name,
             func.count(ToolCall.id).label("total_calls"),
             func.count(
-                case((ToolCall.status == "completed", 1))
+                case((ToolCall.status == "success", 1))
             ).label("successful_calls"),
             func.count(
                 case((ToolCall.status == "failed", 1))
@@ -216,7 +214,7 @@ async def get_tool_analytics(
 @router.get("/recent-tasks")
 async def get_recent_tasks(
     limit: int = 10,
-    days: Literal[7, 30] | None = None,
+    days: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
