@@ -14,6 +14,7 @@ from app.models.task_step import TaskStep
 from app.models.tool_call import ToolCall
 from app.models.approval import Approval
 from app.models.audit_log import AuditLog
+from app.models.agent_alert import AgentAlert
 
 config = context.config
 

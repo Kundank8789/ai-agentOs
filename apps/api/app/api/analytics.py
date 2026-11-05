@@ -224,6 +224,121 @@ async def get_agent_performance(
     ]
 
 
+@router.get("/agent-health")
+async def get_agent_health(
+    days: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    organization_id = current_user.organization_id
+    cutoff = get_date_cutoff(days)
+
+    task_join_conditions = [
+        Task.agent_id == Agent.id,
+        Task.organization_id == organization_id,
+    ]
+
+    if cutoff is not None:
+        task_join_conditions.append(Task.created_at >= cutoff)
+
+    result = await db.execute(
+        select(
+            Agent.id,
+            Agent.name,
+            Agent.status,
+            func.count(Task.id).label("total_tasks"),
+            func.count(
+                case((Task.status == "completed", 1))
+            ).label("completed_tasks"),
+            func.count(
+                case((Task.status == "failed", 1))
+            ).label("failed_tasks"),
+            func.count(
+                case(
+                    (
+                        Task.status.in_(
+                            ["pending", "running", "waiting_approval"]
+                        ),
+                        1,
+                    )
+                )
+            ).label("active_tasks"),
+            func.max(Task.created_at).label("last_execution_at"),
+            func.avg(
+                case(
+                    (
+                        Task.status.in_(["completed", "failed"]),
+                        func.extract(
+                            "epoch",
+                            Task.updated_at - Task.created_at,
+                        ),
+                    )
+                )
+            ).label("average_duration"),
+        )
+        .outerjoin(Task, and_(*task_join_conditions))
+        .where(Agent.organization_id == organization_id)
+        .group_by(Agent.id, Agent.name, Agent.status)
+        .order_by(func.count(Task.id).desc())
+    )
+
+    agents = result.all()
+
+    response = []
+
+    for agent in agents:
+        finished_tasks = (
+            agent.completed_tasks + agent.failed_tasks
+        )
+
+        success_rate = (
+            round(
+                agent.completed_tasks / finished_tasks * 100,
+                2,
+            )
+            if finished_tasks
+            else 0
+        )
+
+        # Derive a simple health label from success rate + activity
+        if agent.status != "active":
+            health = "inactive"
+        elif finished_tasks == 0:
+            health = "idle"
+        elif success_rate >= 90:
+            health = "healthy"
+        elif success_rate >= 70:
+            health = "degraded"
+        else:
+            health = "unhealthy"
+
+        response.append(
+            {
+                "agent_id": str(agent.id),
+                "name": agent.name,
+                "status": agent.status,
+                "health": health,
+                "total_tasks": agent.total_tasks,
+                "completed_tasks": agent.completed_tasks,
+                "failed_tasks": agent.failed_tasks,
+                "active_tasks": agent.active_tasks,
+                "success_rate": success_rate,
+                "last_execution_at": (
+                    agent.last_execution_at.isoformat()
+                    if agent.last_execution_at is not None
+                    else None
+                ),
+                "average_execution_seconds": (
+                    round(float(agent.average_duration), 2)
+                    if agent.average_duration is not None
+                    else 0
+                ),
+            }
+        )
+
+    return response
+
+
 @router.get("/tools")
 async def get_tool_analytics(
     days: int | None = None,

@@ -7,3 +7,4 @@ from app.models.tool_call import ToolCall
 from app.models.approval import Approval
 from app.models.audit_log import AuditLog
 from app.models.memory import Memory
+from app.models.agent_alert import AgentAlert

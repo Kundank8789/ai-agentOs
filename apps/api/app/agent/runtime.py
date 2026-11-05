@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from app.models.agent import Agent
 from app.models.task import Task
 from app.models.task_step import TaskStep
 from app.models.tool_call import ToolCall
+from app.services.agent_alerts import evaluate_agent_health
 from app.services.audit import log_audit
 from app.services.memory import (
     filter_relevant_memories,
@@ -26,6 +28,30 @@ from app.tools.reasoning import ReasoningTool
 from app.tools.registry import ToolRegistry
 
 TOOL_TIMEOUT_SECONDS = 60
+
+logger = logging.getLogger(__name__)
+
+
+async def evaluate_agent_health_safely(
+    db: AsyncSession,
+    task: Task,
+) -> None:
+    if task.agent_id is None:
+        return
+
+    try:
+        await evaluate_agent_health(
+            db=db,
+            agent_id=task.agent_id,
+            organization_id=task.organization_id,
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.exception(
+            "Agent health evaluation failed for task %s",
+            task.id,
+        )
 
 
 class ApprovalAlreadyClaimed(Exception):
@@ -448,6 +474,7 @@ class AgentRuntime:
                 )
 
             await db.commit()
+            await evaluate_agent_health_safely(db, task)
             await db.refresh(task)
 
             return task
@@ -487,6 +514,7 @@ class AgentRuntime:
                 )
 
                 await db.commit()
+                await evaluate_agent_health_safely(db, task)
 
             except Exception:
                 await db.rollback()
@@ -833,6 +861,7 @@ class AgentRuntime:
             task.status = "failed"
             approval.status = "failed"
             await db.commit()
+            await evaluate_agent_health_safely(db, task)
             await db.refresh(task)
             return task
 
@@ -861,6 +890,7 @@ class AgentRuntime:
             task.status = "failed"
             approval.status = "failed"
             await db.commit()
+            await evaluate_agent_health_safely(db, task)
             await db.refresh(task)
             return task
 
@@ -888,6 +918,7 @@ class AgentRuntime:
             task.status = "failed"
             approval.status = "failed"
             await db.commit()
+            await evaluate_agent_health_safely(db, task)
             await db.refresh(task)
             return task
 
@@ -1021,6 +1052,7 @@ class AgentRuntime:
                 )
 
         await db.commit()
+        await evaluate_agent_health_safely(db, task)
         await db.refresh(task)
 
         return task

@@ -12,6 +12,7 @@ from app.api.tools import router as tools_router          # ✅ correct tools im
 from app.database import AsyncSessionLocal
 from app.api.tool_calls import router as tool_calls_router
 from app.api.analytics import router as analytics_router
+from app.api.alerts import router as alerts_router
 
 app = FastAPI(
     title="AgentOS API",
@@ -44,6 +45,8 @@ app.include_router(audit.router)
 app.include_router(tools_router)         
 app.include_router(tool_calls_router)     
 app.include_router(analytics_router)            # ✅ registered
+app.include_router(alerts_router)
+
 
 
 @app.get("/health")
