@@ -107,6 +107,62 @@ async def get_analytics_overview(
     }
 
 
+@router.get("/trends")
+async def get_execution_trends(
+    days: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    organization_id = current_user.organization_id
+    cutoff = get_date_cutoff(days)
+
+    task_filters = [
+        Task.organization_id == organization_id
+    ]
+
+    if cutoff is not None:
+        task_filters.append(Task.created_at >= cutoff)
+
+    task_day = func.date(Task.created_at)
+
+    result = await db.execute(
+        select(
+            task_day.label("date"),
+            func.count(Task.id).label("total_tasks"),
+            func.count(
+                case((Task.status == "completed", 1))
+            ).label("completed_tasks"),
+            func.count(
+                case((Task.status == "failed", 1))
+            ).label("failed_tasks"),
+            func.count(
+                case(
+                    (
+                        Task.status.in_(
+                            ["pending", "running", "waiting_approval"]
+                        ),
+                        1,
+                    )
+                )
+            ).label("active_tasks"),
+        )
+        .where(*task_filters)
+        .group_by(task_day)
+        .order_by(task_day.asc())
+    )
+
+    return [
+        {
+            "date": row.date.isoformat(),
+            "total_tasks": row.total_tasks,
+            "completed_tasks": row.completed_tasks,
+            "failed_tasks": row.failed_tasks,
+            "active_tasks": row.active_tasks,
+        }
+        for row in result.all()
+    ]
+
+
 @router.get("/agents")
 async def get_agent_performance(
     days: int | None = None,

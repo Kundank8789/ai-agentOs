@@ -509,6 +509,14 @@ export type RecentTask = {
   updated_at: string;
 };
 
+export type ExecutionTrend = {
+  date: string;
+  total_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  active_tasks: number;
+};
+
 export type AnalyticsDateRange = 7 | 30 | null;
 
 function analyticsQuery(days: AnalyticsDateRange): string {
@@ -573,4 +581,20 @@ export async function getRecentTasks(
   }
 
   return response.json();
+}
+
+export async function getExecutionTrends(
+  days: AnalyticsDateRange = null,
+): Promise<ExecutionTrend[]> {
+  const response = await apiFetch(
+    `/analytics/trends${analyticsQuery(days)}`,
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch execution trends");
+  }
+
+  const data = await response.json();
+
+  return Array.isArray(data) ? data : [];
 }

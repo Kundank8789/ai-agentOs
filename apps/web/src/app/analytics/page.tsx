@@ -6,10 +6,12 @@ import {
   getAgentPerformance,
   getToolAnalytics,
   getRecentTasks,
+  getExecutionTrends,
   type AnalyticsOverview,
   type AgentPerformance,
   type ToolAnalytics,
   type RecentTask,
+  type ExecutionTrend,
   type AnalyticsDateRange,
 } from "@/lib/api";
 
@@ -129,6 +131,7 @@ export default function AnalyticsPage() {
   const [agents, setAgents] = useState<AgentPerformance[]>([]);
   const [tools, setTools] = useState<ToolAnalytics[]>([]);
   const [recentTasks, setRecentTasks] = useState<RecentTask[]>([]);
+  const [trends, setTrends] = useState<ExecutionTrend[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -146,13 +149,19 @@ export default function AnalyticsPage() {
         setLoading(true);
         setError("");
 
-        const [overviewData, agentData, toolData, taskData] =
-          await Promise.all([
-            getAnalyticsOverview(dateRange),
-            getAgentPerformance(dateRange),
-            getToolAnalytics(dateRange),
-            getRecentTasks(dateRange),
-          ]);
+        const [
+          overviewData,
+          agentData,
+          toolData,
+          taskData,
+          trendsData,
+        ] = await Promise.all([
+          getAnalyticsOverview(dateRange),
+          getAgentPerformance(dateRange),
+          getToolAnalytics(dateRange),
+          getRecentTasks(dateRange),
+          getExecutionTrends(dateRange),
+        ]);
 
         if (!active) return;
 
@@ -160,6 +169,7 @@ export default function AnalyticsPage() {
         setAgents(agentData);
         setTools(toolData);
         setRecentTasks(taskData);
+        setTrends(trendsData);
       } catch (err) {
         if (active) {
           setError(
@@ -188,9 +198,41 @@ export default function AnalyticsPage() {
     ...tools.map((tool) => tool.total_calls)
   );
 
+  const mostUsedTool =
+    [...tools].sort(
+      (a, b) => b.total_calls - a.total_calls
+    )[0] ?? null;
+
+  const toolSuccessRate = mostUsedTool
+    ? mostUsedTool.total_calls > 0
+      ? (
+          (mostUsedTool.successful_calls /
+            mostUsedTool.total_calls) *
+          100
+        ).toFixed(1)
+      : "0.0"
+    : "0.0";
+
   const maxAgentTasks = Math.max(
     1,
     ...agents.map((agent) => agent.total_tasks)
+  );
+
+  const bestPerformingAgent =
+    agents
+      .filter(
+        (agent) =>
+          agent.completed_tasks + agent.failed_tasks > 0
+      )
+      .sort(
+        (a, b) =>
+          b.success_rate - a.success_rate ||
+          b.total_tasks - a.total_tasks
+      )[0] ?? null;
+
+  const maxTrendTasks = Math.max(
+    1,
+    ...trends.map((item) => item.total_tasks)
   );
 
   return (
@@ -287,6 +329,89 @@ export default function AnalyticsPage() {
               />
             </section>
 
+            <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    Daily execution trends
+                  </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Task volume and execution status over time
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500" />
+                    Completed
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-sm bg-red-500" />
+                    Failed
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-sm bg-blue-500" />
+                    Active
+                  </span>
+                </div>
+              </div>
+
+              {trends.length === 0 ? (
+                <div className="mt-6 rounded-xl border border-dashed border-gray-300 p-10 text-center dark:border-gray-700">
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
+                    No execution trends available
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Daily activity will appear here when tasks are created.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-8 overflow-x-auto">
+                  <div className="flex min-w-max items-end gap-4 px-2">
+                    {trends.map((item) => (
+                      <div
+                        key={item.date}
+                        className="flex w-12 flex-col items-center gap-3"
+                        title={`${item.date}: ${item.total_tasks} tasks`}
+                      >
+                        <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                          {item.total_tasks}
+                        </span>
+
+                        <div className="flex h-40 w-7 flex-col justify-end overflow-hidden rounded-t-md bg-gray-100 dark:bg-gray-800">
+                          <div
+                            className="w-full bg-blue-500"
+                            style={{
+                              height: `${(item.active_tasks / maxTrendTasks) * 100}%`,
+                            }}
+                          />
+                          <div
+                            className="w-full bg-red-500"
+                            style={{
+                              height: `${(item.failed_tasks / maxTrendTasks) * 100}%`,
+                            }}
+                          />
+                          <div
+                            className="w-full bg-emerald-500"
+                            style={{
+                              height: `${(item.completed_tasks / maxTrendTasks) * 100}%`,
+                            }}
+                          />
+                        </div>
+
+                        <span className="text-[10px] text-gray-500">
+                          {new Date(`${item.date}T00:00:00`).toLocaleDateString(
+                            "en-IN",
+                            { day: "2-digit", month: "short" }
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+
             <section className="grid gap-4 md:grid-cols-2">
               <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
                 <p className="text-sm text-gray-500">Task success rate</p>
@@ -329,6 +454,29 @@ export default function AnalyticsPage() {
                 <p className="mt-1 text-sm text-gray-500">
                   Execution volume by agent
                 </p>
+
+                {bestPerformingAgent && (
+                  <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                          Top reliability
+                        </p>
+                        <p className="mt-1 font-semibold text-gray-900 dark:text-white">
+                          {bestPerformingAgent.name}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                          {bestPerformingAgent.completed_tasks} completed ·{" "}
+                          {bestPerformingAgent.failed_tasks} failed
+                        </p>
+                      </div>
+
+                      <p className="text-2xl font-bold text-emerald-600">
+                        {bestPerformingAgent.success_rate}%
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-6 space-y-6">
                   {agents.length === 0 && (
@@ -384,6 +532,43 @@ export default function AnalyticsPage() {
                 <p className="mt-1 text-sm text-gray-500">
                   Calls made by connected tools
                 </p>
+
+                {mostUsedTool && (
+                  <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50 p-4 dark:border-violet-900 dark:bg-violet-950/30">
+                    <p className="text-xs font-medium uppercase tracking-wide text-violet-700 dark:text-violet-400">
+                      Most used tool
+                    </p>
+
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-gray-900 dark:text-white">
+                          {mostUsedTool.tool_name}
+                        </p>
+                        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                          {mostUsedTool.total_calls} total calls
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <p className="text-2xl font-bold text-violet-600">
+                          {toolSuccessRate}%
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Success rate
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex gap-4 text-xs">
+                      <span className="text-emerald-600">
+                        {mostUsedTool.successful_calls} successful
+                      </span>
+                      <span className="text-red-500">
+                        {mostUsedTool.failed_calls} failed
+                      </span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-6 space-y-6">
                   {tools.length === 0 && (
