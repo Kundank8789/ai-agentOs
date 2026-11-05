@@ -517,6 +517,21 @@ export type ExecutionTrend = {
   active_tasks: number;
 };
 
+export type AgentHealth = {
+  agent_id: string;
+  name: string;
+  status: string;
+  health_status: "healthy" | "attention" | "inactive" | "no_data";
+  total_tasks: number;
+  completed_tasks: number;
+  failed_tasks: number;
+  active_tasks: number;
+  success_rate: number;
+  failure_rate: number;
+  average_duration_seconds: number;
+  last_execution_at: string | null;
+};
+
 export type AnalyticsDateRange = 7 | 30 | null;
 
 function analyticsQuery(days: AnalyticsDateRange): string {
@@ -592,6 +607,22 @@ export async function getExecutionTrends(
 
   if (!response.ok) {
     throw new Error("Failed to fetch execution trends");
+  }
+
+  const data = await response.json();
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAgentHealth(
+  days: AnalyticsDateRange = null,
+): Promise<AgentHealth[]> {
+  const response = await apiFetch(
+    `/analytics/agent-health${analyticsQuery(days)}`,
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch agent health");
   }
 
   const data = await response.json();

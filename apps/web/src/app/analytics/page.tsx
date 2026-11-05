@@ -7,11 +7,13 @@ import {
   getToolAnalytics,
   getRecentTasks,
   getExecutionTrends,
+  getAgentHealth,
   type AnalyticsOverview,
   type AgentPerformance,
   type ToolAnalytics,
   type RecentTask,
   type ExecutionTrend,
+  type AgentHealth,
   type AnalyticsDateRange,
 } from "@/lib/api";
 
@@ -47,6 +49,57 @@ function StatusBadge({ status }: { status: string }) {
     >
       {status.replaceAll("_", " ")}
     </span>
+  );
+}
+
+function HealthBadge({
+  status,
+}: {
+  status: AgentHealth["health_status"];
+}) {
+  const styles: Record<AgentHealth["health_status"], string> = {
+    healthy: "bg-emerald-500/10 text-emerald-600",
+    attention: "bg-amber-500/10 text-amber-600",
+    inactive: "bg-gray-500/10 text-gray-500",
+    no_data: "bg-slate-500/10 text-slate-500",
+  };
+
+  const labels: Record<AgentHealth["health_status"], string> = {
+    healthy: "Healthy",
+    attention: "Attention",
+    inactive: "Inactive",
+    no_data: "No data",
+  };
+
+  return (
+    <span
+      className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${
+        styles[status] || styles.no_data
+      }`}
+    >
+      {labels[status] || status}
+    </span>
+  );
+}
+
+function HealthStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-gray-400">
+        {label}
+      </p>
+      <p className={`mt-0.5 font-semibold ${tone || "text-gray-800 dark:text-gray-100"}`}>
+        {value}
+      </p>
+    </div>
   );
 }
 
@@ -107,6 +160,20 @@ function AnalyticsSkeleton() {
         ))}
       </div>
 
+      {/* Agent health */}
+      <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+        <div className="h-5 w-40 rounded bg-gray-200 dark:bg-gray-700" />
+        <div className="mt-3 h-3 w-52 rounded bg-gray-100 dark:bg-gray-800" />
+        <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {[1, 2, 3].map((item) => (
+            <div
+              key={item}
+              className="h-40 rounded-xl bg-gray-100 dark:bg-gray-800"
+            />
+          ))}
+        </div>
+      </div>
+
       {/* Recent executions */}
       <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
         <div className="h-5 w-44 rounded bg-gray-200 dark:bg-gray-700" />
@@ -132,6 +199,7 @@ export default function AnalyticsPage() {
   const [tools, setTools] = useState<ToolAnalytics[]>([]);
   const [recentTasks, setRecentTasks] = useState<RecentTask[]>([]);
   const [trends, setTrends] = useState<ExecutionTrend[]>([]);
+  const [agentHealth, setAgentHealth] = useState<AgentHealth[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -155,12 +223,14 @@ export default function AnalyticsPage() {
           toolData,
           taskData,
           trendsData,
+          healthData,
         ] = await Promise.all([
           getAnalyticsOverview(dateRange),
           getAgentPerformance(dateRange),
           getToolAnalytics(dateRange),
           getRecentTasks(dateRange),
           getExecutionTrends(dateRange),
+          getAgentHealth(dateRange),
         ]);
 
         if (!active) return;
@@ -170,6 +240,7 @@ export default function AnalyticsPage() {
         setTools(toolData);
         setRecentTasks(taskData);
         setTrends(trendsData);
+        setAgentHealth(healthData);
       } catch (err) {
         if (active) {
           setError(
@@ -233,6 +304,14 @@ export default function AnalyticsPage() {
   const maxTrendTasks = Math.max(
     1,
     ...trends.map((item) => item.total_tasks)
+  );
+
+  const healthSummary = agentHealth.reduce(
+    (acc, agent) => {
+      acc[agent.health_status] = (acc[agent.health_status] || 0) + 1;
+      return acc;
+    },
+    {} as Record<AgentHealth["health_status"], number>
   );
 
   return (
@@ -610,6 +689,111 @@ export default function AnalyticsPage() {
                   ))}
                 </div>
               </div>
+            </section>
+
+            {/* Step 3.4 — Agent health section */}
+            <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                <div>
+                  <h2 className="text-lg font-semibold">Agent health</h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Live reliability snapshot for every agent in your organization.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {agentHealth.length > 0 && (
+                    <>
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 font-medium text-emerald-600">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        {healthSummary.healthy || 0} healthy
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 font-medium text-amber-600">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                        {healthSummary.attention || 0} attention
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-500/10 px-2.5 py-1 font-medium text-gray-500">
+                        <span className="h-1.5 w-1.5 rounded-full bg-gray-500" />
+                        {healthSummary.inactive || 0} inactive
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-500/10 px-2.5 py-1 font-medium text-slate-500">
+                        <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+                        {healthSummary.no_data || 0} no data
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {agentHealth.length === 0 ? (
+                <div className="mt-6 rounded-xl border border-dashed border-gray-300 p-10 text-center dark:border-gray-700">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
+                    <span className="text-lg">🩺</span>
+                  </div>
+                  <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">
+                    No agent health data available
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Create an agent and run a task to populate health metrics.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {agentHealth.map((agent) => (
+                    <div
+                      key={agent.agent_id}
+                      className="flex flex-col rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-900/60"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold">{agent.name}</p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            {agent.total_tasks} task
+                            {agent.total_tasks === 1 ? "" : "s"}
+                            {" · "}
+                            {agent.status}
+                          </p>
+                        </div>
+                        <HealthBadge status={agent.health_status} />
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                        <HealthStat
+                          label="Success"
+                          value={`${Number(agent.success_rate ?? 0).toFixed(1)}%`}
+                          tone="text-emerald-600"
+                        />
+                        <HealthStat
+                          label="Failure"
+                          value={`${Number(agent.failure_rate ?? 0).toFixed(1)}%`}
+                          tone="text-red-500"
+                        />
+                        <HealthStat
+                          label="Avg time"
+                          value={
+                            agent.average_duration_seconds > 0
+                              ? formatDuration(agent.average_duration_seconds)
+                              : "—"
+                          }
+                        />
+                        <HealthStat
+                          label="Active"
+                          value={String(agent.active_tasks)}
+                        />
+                      </div>
+
+                      <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-3 text-[11px] text-gray-500 dark:border-gray-800">
+                        <span>Last execution</span>
+                        <span className="font-medium text-gray-700 dark:text-gray-300">
+                          {agent.last_execution_at
+                            ? new Date(agent.last_execution_at).toLocaleString()
+                            : "Never"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
