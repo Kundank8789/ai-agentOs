@@ -9,6 +9,8 @@ import {
   getApprovals,
   getTasks,
   rejectApproval,
+  getAlerts,
+  type AgentAlert,
 } from "@/lib/api";
 
 type Task = {
@@ -50,6 +52,10 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
 
+  const [notifications, setNotifications] = useState<AgentAlert[]>([]);
+  const [readAlertIds, setReadAlertIds] = useState<string[]>([]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
 
@@ -76,6 +82,44 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadDashboard();
+  }, []);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("agentos_read_alerts");
+
+    if (stored) {
+      try {
+        setReadAlertIds(JSON.parse(stored));
+      } catch {
+        localStorage.removeItem("agentos_read_alerts");
+      }
+    }
+
+    let mounted = true;
+
+    const refreshNotifications = async () => {
+      try {
+        const data = await getAlerts();
+
+        if (mounted) {
+          setNotifications(data.slice(0, 8));
+        }
+      } catch (error) {
+        console.error("Notification refresh error:", error);
+      }
+    };
+
+    void refreshNotifications();
+
+    const interval = window.setInterval(
+      refreshNotifications,
+      30000,
+    );
+
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
   }, []);
 
   async function handleCreateTask(event: FormEvent<HTMLFormElement>) {
@@ -140,6 +184,39 @@ export default function DashboardPage() {
       );
     }
   }
+
+  function markNotificationRead(alertId: string) {
+    setReadAlertIds((previous) => {
+      const updated = Array.from(new Set([...previous, alertId]));
+
+      localStorage.setItem(
+        "agentos_read_alerts",
+        JSON.stringify(updated),
+      );
+
+      return updated;
+    });
+  }
+
+  function markAllNotificationsRead() {
+    const updated = Array.from(
+      new Set([
+        ...readAlertIds,
+        ...notifications.map((alert) => alert.id),
+      ]),
+    );
+
+    setReadAlertIds(updated);
+
+    localStorage.setItem(
+      "agentos_read_alerts",
+      JSON.stringify(updated),
+    );
+  }
+
+  const unreadCount = notifications.filter(
+    (alert) => !readAlertIds.includes(alert.id),
+  ).length;
 
   const stats = useMemo(() => {
     const pending = approvals.filter(
@@ -209,7 +286,110 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Notification bell — Step 65 */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setNotificationOpen((open) => !open)}
+                aria-label="Notifications"
+                className="relative rounded-lg border border-white/10 bg-white/5 p-2 text-zinc-300 transition hover:bg-white/10"
+              >
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.8}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0"
+                  />
+                </svg>
+
+                {unreadCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-semibold text-white">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {notificationOpen && (
+                <div className="absolute right-0 top-full z-50 mt-2 w-80 overflow-hidden rounded-xl border border-white/10 bg-[#0f0f11] shadow-2xl">
+                  <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                    <p className="text-sm font-medium">Notifications</p>
+
+                    {unreadCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={markAllNotificationsRead}
+                        className="text-xs text-blue-400 transition hover:text-blue-300"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-96 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <p className="px-4 py-6 text-center text-sm text-zinc-500">
+                        No notifications yet
+                      </p>
+                    ) : (
+                      notifications.map((alert) => {
+                        const isRead = readAlertIds.includes(alert.id);
+
+                        return (
+                          <button
+                            key={alert.id}
+                            type="button"
+                            onClick={() => markNotificationRead(alert.id)}
+                            className={`flex w-full gap-3 border-b border-white/5 px-4 py-3 text-left transition hover:bg-white/5 ${
+                              isRead ? "opacity-60" : ""
+                            }`}
+                          >
+                            <span
+                              className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                                alert.severity === "critical"
+                                  ? "bg-red-400"
+                                  : "bg-yellow-400"
+                              }`}
+                            />
+
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium">
+                                {alert.title}
+                              </p>
+                              <p className="mt-1 line-clamp-2 text-xs text-zinc-500">
+                                {alert.message}
+                              </p>
+                              <p className="mt-1 text-[10px] text-zinc-600">
+                                {formatDate(alert.created_at)}
+                              </p>
+                            </div>
+
+                            {!isRead && (
+                              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  <Link
+                    href="/alerts"
+                    onClick={() => setNotificationOpen(false)}
+                    className="block border-t border-white/10 px-4 py-3 text-center text-xs text-zinc-400 transition hover:text-white"
+                  >
+                    View all alerts →
+                  </Link>
+                </div>
+              )}
+            </div>
+
             <Link
               href="/tasks"
               className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm text-zinc-300 transition hover:bg-white/10"
