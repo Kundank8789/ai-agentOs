@@ -629,3 +629,111 @@ export async function getAgentHealth(
 
   return Array.isArray(data) ? data : [];
 }
+
+export type AgentAlert = {
+  id: string;
+  organization_id: string;
+  agent_id: string;
+  alert_type: string;
+  severity: "warning" | "critical";
+  title: string;
+  message: string;
+  status: "active" | "acknowledged" | "resolved";
+  failure_rate: number | null;
+  threshold: number | null;
+  metadata: Record<string, unknown> | null;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
+};
+
+export type AlertSummary = {
+  total: number;
+  active: number;
+  acknowledged: number;
+  resolved: number;
+  critical_active: number;
+  warning_active: number;
+};
+
+export type AlertSettings = {
+  warning_threshold: number;
+  critical_threshold: number;
+  min_completed_tasks: number;
+};
+
+export async function getAlerts(
+  status?: string,
+  severity?: string,
+): Promise<AgentAlert[]> {
+  const params = new URLSearchParams();
+
+  if (status) params.set("status", status);
+  if (severity) params.set("severity", severity);
+
+  const query = params.toString();
+  const response = await apiFetch(
+    `/alerts/${query ? `?${query}` : ""}`,
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to fetch alerts");
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAlertSummary(): Promise<AlertSummary> {
+  const response = await apiFetch("/alerts/summary");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch alert summary");
+  }
+
+  return response.json();
+}
+
+export async function acknowledgeAlert(
+  alertId: string,
+): Promise<AgentAlert> {
+  const response = await apiFetch(
+    `/alerts/${alertId}/acknowledge`,
+    { method: "POST" },
+  );
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to acknowledge alert");
+  }
+
+  return response.json();
+}
+
+export async function getAlertSettings(): Promise<AlertSettings> {
+  const response = await apiFetch("/alerts/settings");
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch alert settings");
+  }
+
+  return response.json();
+}
+
+export async function updateAlertSettings(
+  settings: AlertSettings,
+): Promise<{ message: string; settings: AlertSettings }> {
+  const response = await apiFetch("/alerts/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to update alert settings");
+  }
+
+  return response.json();
+}
