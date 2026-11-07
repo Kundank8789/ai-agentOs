@@ -646,6 +646,7 @@ export type AgentAlert = {
   acknowledged_at: string | null;
   resolved_at: string | null;
   created_at: string;
+  is_read: boolean;
 };
 
 export type AlertSummary = {
@@ -684,6 +685,37 @@ export async function getAlerts(
 
   const data = await response.json();
   return Array.isArray(data) ? data : [];
+}
+
+export async function markAlertRead(
+  alertId: string,
+): Promise<{ message: string; alert_id: string }> {
+  const response = await apiFetch(`/alerts/${alertId}/read`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to mark alert as read");
+  }
+
+  return response.json();
+}
+
+export async function markAllAlertsRead(): Promise<{
+  message: string;
+  read_count: number;
+}> {
+  const response = await apiFetch("/alerts/read-all", {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || "Failed to mark all alerts as read");
+  }
+
+  return response.json();
 }
 
 export async function getAlertSummary(): Promise<AlertSummary> {

@@ -3,11 +3,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, exists
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, get_db
 from app.models.agent_alert import AgentAlert
+from app.models.alert_read import AlertRead
 from app.models.organization import Organization
 from app.models.user import User
 
@@ -82,13 +84,22 @@ async def list_alerts(
             )
         query = query.where(AgentAlert.severity == severity)
 
+    query = query.outerjoin(
+        AlertRead,
+        (AlertRead.alert_id == AgentAlert.id)
+        & (AlertRead.user_id == current_user.id),
+    ).add_columns(AlertRead.alert_id.label("read_alert_id"))
+
     result = await db.execute(
         query.order_by(AgentAlert.created_at.desc())
     )
 
     return [
-        serialize_alert(alert)
-        for alert in result.scalars().all()
+        {
+            **serialize_alert(alert),
+            "is_read": read_alert_id is not None,
+        }
+        for alert, read_alert_id in result.all()
     ]
 
 
@@ -212,6 +223,118 @@ async def update_alert_settings(
         "message": "Alert settings updated successfully",
         "settings": organization.alert_settings,
     }
+
+
+# ============================================================================
+# Notification (read-state) endpoints — Phase 4.10 Step 11
+# ============================================================================
+
+
+@router.post("/{alert_id}/read")
+async def mark_alert_read(
+    alert_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(AgentAlert.id).where(
+            AgentAlert.id == alert_id,
+            AgentAlert.organization_id == current_user.organization_id,
+        )
+    )
+
+    alert = result.scalar_one_or_none()
+
+    if alert is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Alert not found",
+        )
+
+    statement = (
+        insert(AlertRead)
+        .values(
+            user_id=current_user.id,
+            alert_id=alert_id,
+        )
+        .on_conflict_do_nothing(
+            index_elements=["user_id", "alert_id"]
+        )
+    )
+
+    await db.execute(statement)
+    await db.commit()
+
+    return {
+        "message": "Notification marked as read",
+        "alert_id": str(alert_id),
+    }
+
+
+@router.post("/read-all")
+async def mark_all_alerts_read(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    statement = (
+        insert(AlertRead)
+        .from_select(
+            ["user_id", "alert_id"],
+            select(
+                current_user.id,
+                AgentAlert.id,
+            ).where(
+                AgentAlert.organization_id == current_user.organization_id,
+                ~exists(
+                    select(1).where(
+                        AlertRead.user_id == current_user.id,
+                        AlertRead.alert_id == AgentAlert.id,
+                    )
+                ),
+            ),
+        )
+        .on_conflict_do_nothing(
+            index_elements=["user_id", "alert_id"]
+        )
+    )
+
+    await db.execute(statement)
+    await db.commit()
+
+    return {"message": "All alerts marked as read"}
+
+
+@router.get("/notifications")
+async def get_notifications(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    is_read_expr = exists(
+        select(1).where(
+            AlertRead.user_id == current_user.id,
+            AlertRead.alert_id == AgentAlert.id,
+        )
+    ).label("is_read")
+
+    result = await db.execute(
+        select(AgentAlert, is_read_expr)
+        .where(
+            AgentAlert.organization_id == current_user.organization_id
+        )
+        .order_by(AgentAlert.created_at.desc())
+        .limit(limit)
+    )
+
+    rows = result.all()
+
+    notifications = []
+    for alert, is_read in rows:
+        data = serialize_alert(alert)
+        data["is_read"] = bool(is_read)
+        notifications.append(data)
+
+    return notifications
 
 
 @router.post("/{alert_id}/acknowledge")

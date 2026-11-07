@@ -10,6 +10,8 @@ import {
   getTasks,
   rejectApproval,
   getAlerts,
+  markAlertRead,
+  markAllAlertsRead,
   type AgentAlert,
 } from "@/lib/api";
 
@@ -53,7 +55,6 @@ export default function DashboardPage() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
 
   const [notifications, setNotifications] = useState<AgentAlert[]>([]);
-  const [readAlertIds, setReadAlertIds] = useState<string[]>([]);
   const [notificationOpen, setNotificationOpen] = useState(false);
 
   const [loading, setLoading] = useState(true);
@@ -85,16 +86,6 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    const stored = localStorage.getItem("agentos_read_alerts");
-
-    if (stored) {
-      try {
-        setReadAlertIds(JSON.parse(stored));
-      } catch {
-        localStorage.removeItem("agentos_read_alerts");
-      }
-    }
-
     let mounted = true;
 
     const refreshNotifications = async () => {
@@ -185,37 +176,39 @@ export default function DashboardPage() {
     }
   }
 
-  function markNotificationRead(alertId: string) {
-    setReadAlertIds((previous) => {
-      const updated = Array.from(new Set([...previous, alertId]));
+  async function markNotificationRead(alertId: string) {
+    try {
+      await markAlertRead(alertId);
 
-      localStorage.setItem(
-        "agentos_read_alerts",
-        JSON.stringify(updated),
+      setNotifications((previous) =>
+        previous.map((alert) =>
+          alert.id === alertId
+            ? { ...alert, is_read: true }
+            : alert,
+        ),
       );
-
-      return updated;
-    });
+    } catch (error) {
+      console.error("Mark notification read error:", error);
+    }
   }
 
-  function markAllNotificationsRead() {
-    const updated = Array.from(
-      new Set([
-        ...readAlertIds,
-        ...notifications.map((alert) => alert.id),
-      ]),
-    );
+  async function markAllNotificationsRead() {
+    try {
+      await markAllAlertsRead();
 
-    setReadAlertIds(updated);
-
-    localStorage.setItem(
-      "agentos_read_alerts",
-      JSON.stringify(updated),
-    );
+      setNotifications((previous) =>
+        previous.map((alert) => ({
+          ...alert,
+          is_read: true,
+        })),
+      );
+    } catch (error) {
+      console.error("Mark all notifications read error:", error);
+    }
   }
 
   const unreadCount = notifications.filter(
-    (alert) => !readAlertIds.includes(alert.id),
+    (alert) => !alert.is_read,
   ).length;
 
   const stats = useMemo(() => {
@@ -287,7 +280,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Notification bell — Step 65 */}
+            {/* Notification bell */}
             <div className="relative">
               <button
                 type="button"
@@ -339,7 +332,7 @@ export default function DashboardPage() {
                       </p>
                     ) : (
                       notifications.map((alert) => {
-                        const isRead = readAlertIds.includes(alert.id);
+                        const isRead = alert.is_read;
 
                         return (
                           <button

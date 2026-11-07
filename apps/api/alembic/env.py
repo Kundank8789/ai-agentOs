@@ -15,6 +15,7 @@ from app.models.tool_call import ToolCall
 from app.models.approval import Approval
 from app.models.audit_log import AuditLog
 from app.models.agent_alert import AgentAlert
+from app.models.alert_read import AlertRead
 
 config = context.config
 
