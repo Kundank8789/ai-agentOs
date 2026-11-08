@@ -1,4 +1,3 @@
-
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func
@@ -46,7 +45,7 @@ async def evaluate_agent_health(
     db: AsyncSession,
     agent_id,
     organization_id,
-):
+) -> dict | None:
     organization_result = await db.execute(
         select(Organization).where(
             Organization.id == organization_id
@@ -55,7 +54,7 @@ async def evaluate_agent_health(
     organization = organization_result.scalar_one_or_none()
 
     if organization is None:
-        return
+        return None
 
     settings = get_alert_settings(organization)
 
@@ -68,7 +67,7 @@ async def evaluate_agent_health(
     agent = agent_result.scalar_one_or_none()
 
     if agent is None:
-        return
+        return None
 
     task_result = await db.execute(
         select(
@@ -102,7 +101,7 @@ async def evaluate_agent_health(
 
     # Insufficient history is not evidence of recovery.
     if finished_tasks < settings["min_completed_tasks"]:
-        return
+        return None
 
     failure_rate = round(
         stats.failed / finished_tasks * 100,
@@ -124,7 +123,20 @@ async def evaluate_agent_health(
             existing_alert.status = "resolved"
             existing_alert.resolved_at = datetime.now(timezone.utc)
 
-        return
+            return {
+                "type": "agent_alert_resolved",
+                "alert_id": str(existing_alert.id),
+                "agent_id": str(agent_id),
+                "agent_name": agent.name,
+                "alert_type": "high_failure_rate",
+                "status": "resolved",
+                "failure_rate": failure_rate,
+                "finished_tasks": finished_tasks,
+                "failed_tasks": stats.failed,
+                "completed_tasks": stats.completed,
+            }
+
+        return None
 
     message = (
         f"Agent {agent.name} has a failure rate of "
@@ -137,29 +149,65 @@ async def evaluate_agent_health(
         "completed_tasks": stats.completed,
     }
 
+    title = (
+        "Critical agent failure rate"
+        if severity == "critical"
+        else "Elevated agent failure rate"
+    )
+
     if existing_alert is not None:
         existing_alert.severity = severity
         existing_alert.failure_rate = failure_rate
         existing_alert.threshold = threshold
         existing_alert.message = message
         existing_alert.alert_metadata = metadata
-        return
 
-    db.add(
-        AgentAlert(
-            organization_id=organization_id,
-            agent_id=agent_id,
-            alert_type="high_failure_rate",
-            severity=severity,
-            title=(
-                "Critical agent failure rate"
-                if severity == "critical"
-                else "Elevated agent failure rate"
-            ),
-            message=message,
-            status="active",
-            failure_rate=failure_rate,
-            threshold=threshold,
-            alert_metadata=metadata,
-        )
+        return {
+            "type": "agent_alert_updated",
+            "alert_id": str(existing_alert.id),
+            "agent_id": str(agent_id),
+            "agent_name": agent.name,
+            "alert_type": "high_failure_rate",
+            "severity": severity,
+            "status": existing_alert.status,
+            "title": title,
+            "message": message,
+            "failure_rate": failure_rate,
+            "threshold": threshold,
+            "finished_tasks": finished_tasks,
+            "failed_tasks": stats.failed,
+            "completed_tasks": stats.completed,
+        }
+
+    alert = AgentAlert(
+        organization_id=organization_id,
+        agent_id=agent_id,
+        alert_type="high_failure_rate",
+        severity=severity,
+        title=title,
+        message=message,
+        status="active",
+        failure_rate=failure_rate,
+        threshold=threshold,
+        alert_metadata=metadata,
     )
+
+    db.add(alert)
+    await db.flush()
+
+    return {
+        "type": "agent_alert_created",
+        "alert_id": str(alert.id),
+        "agent_id": str(agent_id),
+        "agent_name": agent.name,
+        "alert_type": "high_failure_rate",
+        "severity": severity,
+        "status": "active",
+        "title": title,
+        "message": message,
+        "failure_rate": failure_rate,
+        "threshold": threshold,
+        "finished_tasks": finished_tasks,
+        "failed_tasks": stats.failed,
+        "completed_tasks": stats.completed,
+    }
