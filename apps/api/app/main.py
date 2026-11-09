@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -8,16 +10,30 @@ from app.api.agents import router as agents_router
 from app.api import memories
 from app.api import auth
 from app.api import audit
-from app.api.tools import router as tools_router          # ✅ correct tools import
+from app.api.tools import router as tools_router
 from app.database import AsyncSessionLocal
 from app.api.tool_calls import router as tool_calls_router
 from app.api.analytics import router as analytics_router
 from app.api.alerts import router as alerts_router
+from app.api.websocket import router as websocket_router
+from app.services.notification_manager import notification_manager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await notification_manager.connect_redis()
+
+    try:
+        yield
+    finally:
+        await notification_manager.close_redis()
+
 
 app = FastAPI(
     title="AgentOS API",
     description="AI employee platform for business operations",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -42,11 +58,11 @@ app.include_router(agents_router)
 app.include_router(memories.router)
 app.include_router(auth.router)
 app.include_router(audit.router)
-app.include_router(tools_router)         
-app.include_router(tool_calls_router)     
-app.include_router(analytics_router)            # ✅ registered
+app.include_router(tools_router)
+app.include_router(tool_calls_router)
+app.include_router(analytics_router)
 app.include_router(alerts_router)
-
+app.include_router(websocket_router)
 
 
 @app.get("/health")
@@ -65,4 +81,25 @@ async def database_health():
         return {
             "status": "ok",
             "database": result.scalar(),
+        }
+
+
+@app.get("/health/redis")
+async def redis_health():
+    if notification_manager.redis is None:
+        return {
+            "status": "disconnected",
+            "redis": False,
+        }
+
+    try:
+        await notification_manager.redis.ping()
+        return {
+            "status": "ok",
+            "redis": True,
+        }
+    except Exception:
+        return {
+            "status": "error",
+            "redis": False,
         }
