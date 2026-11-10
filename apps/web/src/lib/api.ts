@@ -36,6 +36,22 @@ export function isAuthenticated(): boolean {
   return Boolean(getToken());
 }
 
+export function getNotificationsWebSocketUrl(): string | null {
+  const token = getToken();
+
+  if (!token) {
+    return null;
+  }
+
+  const url = new URL(API_URL);
+
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/ws/notifications`;
+  url.searchParams.set("token", token);
+
+  return url.toString();
+}
+
 async function apiFetch(
   path: string,
   options: RequestInit = {},

@@ -12,6 +12,7 @@ import {
   getAlerts,
   markAlertRead,
   markAllAlertsRead,
+  getNotificationsWebSocketUrl,
   type AgentAlert,
 } from "@/lib/api";
 
@@ -87,6 +88,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let mounted = true;
+    let reconnectTimer: number | undefined;
+    let reconnectDelay = 1000;
+    let socket: WebSocket | null = null;
 
     const refreshNotifications = async () => {
       try {
@@ -100,8 +104,59 @@ export default function DashboardPage() {
       }
     };
 
+    const connectWebSocket = () => {
+      if (!mounted) return;
+
+      const wsUrl = getNotificationsWebSocketUrl();
+
+      if (!wsUrl) return;
+
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        reconnectDelay = 1000;
+        void refreshNotifications();
+      };
+
+      socket.onmessage = (message) => {
+        try {
+          const event = JSON.parse(message.data);
+
+          if (
+            event.type === "alert.created" ||
+            event.type === "alert.updated" ||
+            event.type === "alert.resolved"
+          ) {
+            void refreshNotifications();
+          }
+        } catch (error) {
+          console.error("Invalid notification event:", error);
+        }
+      };
+
+      socket.onerror = () => {
+        socket?.close();
+      };
+
+      socket.onclose = () => {
+        if (!mounted) return;
+
+        reconnectTimer = window.setTimeout(
+          connectWebSocket,
+          reconnectDelay,
+        );
+
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      };
+    };
+
+    // Initial notification load.
     void refreshNotifications();
 
+    // Connect to real-time notifications.
+    connectWebSocket();
+
+    // Polling remains as a fallback and reconciliation mechanism.
     const interval = window.setInterval(
       refreshNotifications,
       30000,
@@ -109,7 +164,14 @@ export default function DashboardPage() {
 
     return () => {
       mounted = false;
+
       window.clearInterval(interval);
+
+      if (reconnectTimer !== undefined) {
+        window.clearTimeout(reconnectTimer);
+      }
+
+      socket?.close();
     };
   }, []);
 
